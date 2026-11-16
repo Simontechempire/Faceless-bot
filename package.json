@@ -1,0 +1,100 @@
+{
+  "name": "faceless-bot",
+  "version": "1.0.0",
+  "description": "FACELESS Bot - Powerful WhatsApp Bot with Pairing Code Website, Newsletter Cube Tiny Reply, Anti-Status, Anti-Delete, Anti-ViewOnce, Group Anti Features, 27 Menus, Plugin System, Owner Controls, Media Downloader, Fun, Economy, Games, AI, Anime, Adult 18+ and More",
+  "main": "index.js",
+  "type": "commonjs",
+  "license": "MIT",
+  "author": "FACELESS Bot - Owner +234 903 748 3649",
+  "maintainers": [
+    {
+      "name": "FACELESS",
+      "email": "facelessbot@gmail.com"
+    }
+  ],
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "faceless-bot",
+    "baileys",
+    "pairing-code",
+    "whatsapp-bot",
+    "newsletter",
+    "anti-status",
+    "anti-delete",
+    "anti-viewonce",
+    "group-management",
+    "downloader",
+    "ai-bot",
+    "fun-bot",
+    "economy-bot",
+    "games",
+    "anime",
+    "media",
+    "adult"
+  ],
+  "homepage": "https://github.com/faceless/faceless-bot",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/faceless/faceless-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/faceless/faceless-bot/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "os": [
+    "linux",
+    "win32",
+    "darwin"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "pm2": "pm2 start index.js --name faceless-bot",
+    "pm2-stop": "pm2 stop faceless-bot",
+    "pm2-restart": "pm2 restart faceless-bot",
+    "pm2-logs": "pm2 logs faceless-bot",
+    "install-deps": "npm install",
+    "update": "npm update",
+    "clean": "rm -rf node_modules session && npm install",
+    "lint": "node --check index.js",
+    "test": "node --check index.js && node --check config.js && node --check lib/function.js && node --check lib/menu.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.0",
+    "axios": "^1.7.0",
+    "body-parser": "^1.20.2",
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "file-type": "^19.0.0",
+    "fluent-ffmpeg": "^2.1.3",
+    "form-data": "^4.0.0",
+    "fs-extra": "^11.2.0",
+    "jimp": "^0.22.12",
+    "moment-timezone": "^0.5.45",
+    "node-fetch": "^3.3.2",
+    "node-id3": "^0.2.5",
+    "pino": "^8.0.0",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "sharp": "^0.33.4",
+    "wa-sticker-formatter": "^4.4.4",
+    "yt-search": "^2.11.1",
+    "ytdl-core": "^4.11.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "optionalDependencies": {
+    "pm2": "^5.3.0"
+  }
+}
