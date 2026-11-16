@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🐺 WOLF XMD TITAN</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',Arial,sans-serif}
+body{background:#0a0a0a;color:#fff;min-height:100vh;padding:20px}
+.container{max-width:520px;margin:0 auto}
+.logo{text-align:center;margin:20px 0}
+.logo h1{font-size:42px}
+.logo p{color:#888;margin-top:5px}
+.card{background:#151515;border:1px solid #222;border-radius:16px;padding:20px;margin-bottom:15px}
+.card h3{margin-bottom:12px;font-size:16px}
+.status{display:flex;align-items:center;gap:10px;padding:12px;background:#1a1a1a;border-radius:10px;margin-bottom:12px}
+.dot{width:12px;height:12px;border-radius:50%;background:#ff4444;box-shadow:0 0 10px #ff4444}
+.dot.online{background:#00ff88;box-shadow:0 0 10px #00ff88}
+.dot.connecting{background:#ffaa00;box-shadow:0 0 10px #ffaa00}
+input{width:100%;padding:14px;background:#1a1a1a;border:1px solid #333;color:#fff;border-radius:10px;font-size:16px;outline:none;margin-bottom:12px}
+input:focus{border-color:#00ff88}
+button{width:100%;padding:14px;background:#00ff88;color:#000;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer}
+button:active{transform:scale(.98)}
+button.secondary{background:#222;color:#fff;border:1px solid #333;margin-top:10px}
+.code-box{display:none;text-align:center;padding:20px;background:#1a1a1a;border:2px dashed #00ff88;border-radius:12px;margin-top:15px}
+.code-box h2{font-size:38px;letter-spacing:4px;color:#00ff88;margin:10px 0}
+.code-box p{color:#888;font-size:13px;line-height:1.6}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat{background:#1a1a1a;padding:15px;border-radius:10px;text-align:center}
+.stat b{font-size:24px;display:block;color:#00ff88}
+.stat span{color:#888;font-size:12px}
+.cmds{background:#1a1a1a;padding:12px;border-radius:10px;font-size:12px;color:#aaa;max-height:120px;overflow-y:auto;line-height:1.8;word-break:break-all}
+.footer{text-align:center;color:#444;font-size:12px;margin-top:20px}
+a{color:#00ff88;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="logo">
+    <h1>🐺 WOLF XMD</h1>
+    <p>WOLF XMD TITAN - V3 | Owner: 239166265317</p>
+  </div>
+
+  <div class="card">
+    <h3>📡 Connection Status</h3>
+    <div class="status">
+      <div class="dot" id="dot"></div>
+      <span id="statusText">Checking...</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="cmdCount">0</b><span>Commands</span></div>
+      <div class="stat"><b id="plugCount">0</b><span>Plugins</span></div>
+    </div>
+  </div>
+
+  <div class="card" id="pairCard">
+    <h3>🔑 Link With Pairing Code</h3>
+    <p style="color:#888;font-size:13px;margin-bottom:12px">Enter your WhatsApp number, get code, then go to WhatsApp &gt; Linked Devices &gt; Link with Phone Number</p>
+    <input type="tel" id="phone" placeholder="239166265317" value="239166265317">
+    <button onclick="getCode()">GET PAIRING CODE</button>
+    <div class="code-box" id="codeBox">
+      <p>YOUR PAIRING CODE</p>
+      <h2 id="codeText">---- ----</h2>
+      <p>Go to WhatsApp &gt; Linked Devices<br>Link with Phone Number<br>Enter this code within 60 seconds</p>
+    </div>
+    <p id="pairMsg" style="color:#ff4444;font-size:13px;margin-top:10px;text-align:center"></p>
+  </div>
+
+  <div class="card">
+    <h3>⚡ Quick Commands</h3>
+    <div class="cmds" id="cmdsList">Loading...</div>
+  </div>
+
+  <div class="card">
+    <h3>🛠️ Actions</h3>
+    <button class="secondary" onclick="checkStatus()">🔄 Refresh Status</button>
+    <button class="secondary" onclick="logout()" style="color:#ff4444;border-color:#ff4444">🚪 Logout & Unlink</button>
+  </div>
+
+  <div class="footer">🐺 WOLF XMD TITAN © 2026 | <a href="/api/status">API Status</a> | <a href="/health">Health</a></div>
+</div>
+
+<script>
+async function checkStatus(){
+  try{
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    document.getElementById('statusText').textContent = d.status || 'Unknown';
+    document.getElementById('cmdCount').textContent = d.plugins || d.cmds?.length || 0;
+    document.getElementById('plugCount').textContent = d.plugins || 0;
+    const dot = document.getElementById('dot');
+    if(d.isConnected){ dot.className='dot online'; document.getElementById('pairCard').style.display='none'; }
+    else if(d.status && d.status.includes('CODE')){ dot.className='dot connecting'; }
+    else { dot.className='dot'; }
+    if(d.cmds && Array.isArray(d.cmds)){
+      document.getElementById('cmdsList').textContent = '.' + d.cmds.join('  .');
+    } else if(d.cmds){
+      document.getElementById('cmdsList').textContent = JSON.stringify(d.cmds).slice(0,500);
+    }
+    if(d.pairingCode){
+      document.getElementById('codeBox').style.display='block';
+      document.getElementById('codeText').textContent = d.pairingCode;
+    }
+  }catch(e){ document.getElementById('statusText').textContent='Server Offline'; }
+}
+async function getCode(){
+  const phone = document.getElementById('phone').value.replace(/[^0-9]/g,'');
+  const msg = document.getElementById('pairMsg');
+  if(phone.length < 10){ msg.textContent='Enter valid number e.g 239166265317'; return; }
+  msg.textContent='Requesting code...';
+  msg.style.color='#ffaa00';
+  try{
+    const r = await fetch('/getcode?number='+phone);
+    const d = await r.json();
+    if(d.success){
+      document.getElementById('codeBox').style.display='block';
+      document.getElementById('codeText').textContent = d.codeFormatted || d.code;
+      msg.textContent='Code generated! Enter it in WhatsApp now';
+      msg.style.color='#00ff88';
+    } else {
+      msg.textContent = d.message || 'Failed';
+      msg.style.color='#ff4444';
+    }
+  }catch(e){ msg.textContent='Server error, try again'; }
+}
+async function logout(){
+  if(!confirm('Logout and unlink bot?')) return;
+  await fetch('/api/logout',{method:'POST'});
+  alert('Logged out. Restart to link again.');
+  checkStatus();
+}
+checkStatus();
+setInterval(checkStatus, 5000);
+</script>
+</body>
+  </html>
