@@ -1,232 +1,364 @@
-// ================= META AI V2 - index.js - PAIRING ONLY =================
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+// 🐺 WOLF XMD TITAN - V3 - FIX ADMIN + DISPATCH + ANTILINK STATE
+const {
+  default: makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+  Browsers,
+  downloadMediaMessage
+} = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const readline = require('readline');
+const chalk = require('chalk');
+const express = require('express');
+const path = require('path');
+const fs = require('fs');
 
-// ===== LOAD ALL PLUGINS =====
-const moderator = require('./plugins/moderator');
-const settingsPlugin = require('./plugins/settings');
-const filePlugin = require('./plugins/file');
-const networkPlugin = require('./plugins/network');
-const imagePlugin = require('./plugins/imagestudio');
-const videoPlugin = require('./plugins/video');
+const msgRetryCounterCache = {
+  _cache: new Map(),
+  get(k){ return this._cache.get(k); },
+  set(k,v){ this._cache.set(k,v); return v; },
+  del(k){ this._cache.delete(k); },
+  has(k){ return this._cache.has(k); }
+};
 
-const ALL_PLUGINS = [
-  moderator,
-  settingsPlugin,
-  filePlugin,
-  networkPlugin,
-  imagePlugin,
-  videoPlugin,
-];
-
-const { facelessReply, sendAwait } = require('./lib/function');
-
-const OWNER_NUMBER = process.env.OWNER_NUMBER || '2340000000000';
-const SESSION_DIR = './session';
-
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const question = (q) => new Promise(res => rl.question(q, res));
-
-async function startBot(){
-  const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
-  const { version } = await fetchLatestBaileysVersion();
-
-  const sock = makeWASocket({
-    version,
-    logger: pino({ level: 'silent' }),
-    printQRInTerminal: false,
-    auth: state,
-    browser: ['META AI V2', 'Chrome', '1.0.0'],
-    syncFullHistory: false,
-    markOnlineOnConnect: true,
-  });
-
-  sock.ev.on('creds.update', saveCreds);
-
-  // ===== PAIRING CODE ONLY - NO QR =====
-  if(!sock.authState.creds.registered){
-    setTimeout(async () => {
-      try{
-        const num = await question('Enter Your WhatsApp Number (without +): ');
-        const code = await sock.requestPairingCode(num.trim());
-        console.log('\n================================');
-        console.log('YOUR PAIRING CODE:', code);
-        console.log('Go to WhatsApp > Linked Devices > Link with Phone Number');
-        console.log('Enter Code There');
-        console.log('================================\n');
-      }catch(e){ console.log('Pairing Failed:', e.message); }
-    }, 3000);
-  }
-
-  // ===== CONNECTION - NO QR =====
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
-    if(connection === 'close'){
-      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('Connection Closed, Reconnecting:', shouldReconnect);
-      if(shouldReconnect) startBot();
-      else console.log('Logged Out - Delete session folder and restart');
-    }
-    if(connection === 'open'){
-      console.log('✅ META AI V2 CONNECTED VIA PAIRING CODE');
-      console.log('✅ Loaded Plugins:', ALL_PLUGINS.map(p=>p.name).join(', '));
-      try{
-        const settings = settingsPlugin.getSettings();
-        await sock.sendMessage(OWNER_NUMBER + '@s.whatsapp.net', { text: `✅ META AI V2 Online\nPrefix: ${settings.prefix}\nMode: ${settings.mode}\nPlugins: ${ALL_PLUGINS.length} Loaded` });
-      }catch{}
-    }
-  });
-
-  // ===== WELCOME / GOODBYE =====
-  sock.ev.on('group-participants.update', async (update) => {
-    try{
-      const settings = settingsPlugin.getSettings();
-      const jid = update.id;
-      for(const participant of update.participants){
-        if(update.action === 'add'){
-          const welcomeMsg = settings.welcome?.[jid] || `Welcome @${participant.split('@')[0]} to the group 🎉`;
-          await sock.sendMessage(jid, { text: welcomeMsg, mentions: [participant] });
-        }
-        if(update.action === 'remove'){
-          const byeMsg = settings.goodbye?.[jid] || `Goodbye @${participant.split('@')[0]} 👋`;
-          await sock.sendMessage(jid, { text: byeMsg, mentions: [participant] });
-        }
-      }
-    }catch{}
-  });
-
-  // ===== MAIN MESSAGE HANDLER =====
-  sock.ev.on('messages.upsert', async ({ messages }) => {
-    const m = messages[0];
-    if(!m || !m.message) return;
-    if(m.key.fromMe) return;
-
-    const jid = m.key.remoteJid;
-    const sender = m.key.participant || m.key.remoteJid;
-    const isGroup = jid.endsWith('@g.us');
-    const isOwner = sender.split('@')[0] === OWNER_NUMBER || jid.split('@')[0] === OWNER_NUMBER;
-
-    if(jid === 'status@broadcast'){
-      try{
-        const s = settingsPlugin.getSettings();
-        if(s.antistatus) await sock.readMessages([m.key]);
-      }catch{}
-      return;
-    }
-
-    const body = m.message?.conversation
-      || m.message?.extendedTextMessage?.text
-      || m.message?.imageMessage?.caption
-      || m.message?.videoMessage?.caption
-      || '';
-
-    if(isGroup){
-      try{
-        const muted = await moderator.handleMute(sock, m, jid, sender);
-        if(muted) return;
-      }catch{}
-    }
-
-    const settings = settingsPlugin.getSettings();
-    const PREFIX = settings.prefix || '.';
-
-    if(settings.mode === 'self' && !isOwner) return;
-
-    if(!body.startsWith(PREFIX)){
-      try{ await settingsPlugin.handleAutoReply(sock, m, jid); }catch{}
-      return;
-    }
-
-    const args = body.slice(PREFIX.length).trim().split(/ +/);
-    const cmd = args.shift()?.toLowerCase();
-    const text = args.join(' ');
-    if(!cmd) return;
-
-    console.log(`[CMD] ${isGroup ? 'GROUP' : 'DM'} ${sender.split('@')[0]}: ${PREFIX}${cmd} ${text}`);
-
-    if(cmd === 'menu' || cmd === 'help'){
-      await sendAwait(sock, jid, m);
-      const menuText = `▫️ 💀 META AI V2 - MENU
-
-👑 OWNER:
-.menu - Show Menu
-.settings - View Settings
-.setprefix - Change Prefix
-.mode - Change Mode
-
-🛡️ MODERATOR:
-.kick .mute .unmute
-.warn .unwarn .warns
-.promote .demote
-.tagall .hidetag
-.delete .close .open
-
-📁 FILE:
-.tofile .savefile .getfile
-.listfiles .deletefile
-.renamefile .downloadfile
-.tourl .toimage .toaudio
-
-🌐 NETWORK:
-.ping .speedtest .dns
-.whois .ipinfo .headers
-.ssl .checksite .port .mac
-
-🖼️ PHOTO:
-.blur .grayscale .invert
-.flip .sepia .pixelate
-.brightness .contrast
-.enhance .rotate .resize
-.circle .meme
-.beautiful .wanted .jail
-.trigger .gay .trash .rip
-
-🎬 VIDEO:
-.tovideo .togif .slowmo
-.fast .reverse .mutevideo
-.trim .volume .bwvideo
-.rotatevideo .compressvideo
-.tomp3
-
-Prefix: ${PREFIX}
-Owner: ${settings.ownerName}
-Bot: ${settings.botName}`;
-
-      if(settings.menuImage){
-        try{ await sock.sendMessage(jid, { image: { url: settings.menuImage }, caption: menuText }, { quoted: m }); }
-        catch{ await facelessReply(sock, jid, menuText, m); }
-      } else {
-        await facelessReply(sock, jid, menuText, m);
-      }
-      return;
-    }
-
-    if(cmd === 'alive'){
-      await facelessReply(sock, jid, `✅ META AI V2 Alive\nPrefix: ${PREFIX}\nMode: ${settings.mode}\nPlugins: ${ALL_PLUGINS.length}`, m);
-      return;
-    }
-
-    if(cmd === 'owner'){
-      await facelessReply(sock, jid, `Owner: ${settings.ownerName}\nNumber: ${OWNER_NUMBER}`, m);
-      return;
-    }
-
-    for(const plugin of ALL_PLUGINS){
-      try{
-        const handled = await plugin.run(sock, m, jid, cmd, args, text, isOwner, isGroup, sender);
-        if(handled) return;
-      }catch(e){
-        console.log(`Plugin ${plugin.name} Error:`, e.message);
-      }
-    }
-
-    if(!isGroup){
-      await facelessReply(sock, jid, `Unknown Command: ${PREFIX}${cmd}\nType ${PREFIX}menu`, m);
-    }
-  });
+const msgStore = new Map();
+function storeMsg(m){
+  if(!m?.key?.id) return;
+  msgStore.set(m.key.id, m.message);
+  if(msgStore.size > 500) msgStore.delete(msgStore.keys().next().value);
+}
+async function getMessage(key){
+  if(!key?.id) return undefined;
+  return msgStore.get(key.id);
 }
 
-startBot();
+function bare(jid){ if(!jid) return ''; return String(jid).split(':')[0].split('@')[0]; }
+function isAdminFlag(p){ return p && (p.admin==='admin'||p.admin==='superadmin'||p.isAdmin===true); }
 
-require('http').createServer((req,res)=>{ res.end('META AI V2 Online'); }).listen(process.env.PORT || 3000);
+let config;
+try { config = require('./settings'); } catch {
+  config = { botName: "ALPHA AND OMEGA WOLF XMD", ownerName: "ALPHA", ownerNumber: "239166265317", prefix: ".", sessionName: "session", PORT: process.env.PORT || 10000 };
+}
+config.ownerNumber = "239166265317";
+config.botName = "🐺 WOLF XMD TITAN";
+config.sessionName = "session";
+
+global.sock = null; global.isConnected = false; global.connectionStatus = '⚠️ NOT LINKED'; global.pairingCode = null; global.currentPairingNumber = null; global.lastPairTime = 0; global.appStarted = false;
+
+global.db = global.db || {};
+global.db.groups = global.db.groups || {};
+global.db.settings = global.db.settings || { prefix: ".", mode: "public", autoread: false, autostatus: false, autovv: false, autolike: false, autoreact: false, autotyping: false, autopresence: false, autoreply: false, anticall: false };
+global.db.banned = global.db.banned || [];
+global.db.warnings = global.db.warnings || {};
+global.db.messages = global.db.messages || {};
+global.db.spam = global.db.spam || {};
+global.db.sudo = global.db.sudo || [config.ownerNumber + '@s.whatsapp.net', "239166265317@s.whatsapp.net"];
+global.db.data = global.db.data || {};
+global.db.data.groups = global.db.groups;
+global.groupSettings = global.db.groups;
+
+function getGroup(jid){
+  global.db.groups[jid] = global.db.groups[jid] || { antilink:false, antibot:false, antispam:false, antiviewonce:false, antidelete:false, welcome:false, goodbye:false, welcomeText:"", goodbyeText:"" };
+  return global.db.groups[jid];
+}
+function isAntilinkOn(jid){
+  try{
+    if(global.db.groups?.[jid]?.antilink) return true;
+    if(global.db.groups?.[jid]?.antilink === 'on') return true;
+    if(global.db.data?.groups?.[jid]?.antilink) return true;
+    if(global.groupSettings?.[jid]?.antilink) return true;
+    if(global.db.groups?.[jid]?.antilink?.status) return true;
+    if(global.db.groups?.[jid]?.settings?.antilink) return true;
+  }catch{}
+  return false;
+}
+global.getGroup = getGroup;
+global.isAntilinkOn = isAntilinkOn;
+
+global.plugins=new Map();
+global.wolfCommands={};
+
+function loadPlugins(){
+  const possiblePaths = [path.join(__dirname,'plugins'), path.join(__dirname,'../plugins'), path.join(__dirname,'src/plugins')];
+  let pPath = null;
+  for(const pp of possiblePaths){ if(fs.existsSync(pp)){ pPath=pp; break; } }
+  if(!pPath) { console.log(chalk.red('No plugins folder found')); return; }
+  global.plugins.clear();
+  global.wolfCommands={};
+  let t=0;
+  const IGNORED = ['main.js','index.js','connection.js','settings.js','config.js','app.js','bot.js','server.js'];
+  function rd(dir){
+    const items=fs.readdirSync(dir);
+    for(const it of items){
+      const full=path.join(dir,it);
+      const st=fs.statSync(full);
+      if(st.isDirectory()){
+        if(it === 'node_modules' || it.startsWith('.') || IGNORED.includes(it)) continue;
+        rd(full);
+      }
+      else if(it.endsWith('.js')){
+        if(IGNORED.includes(it)) continue;
+        try{
+          delete require.cache[require.resolve(full)];
+          const d=require(full);
+          const arr=Array.isArray(d)?d:[d];
+          for(const pl of arr){
+            if(typeof pl === 'function'){
+              const nm = pl.name || pl.command || it.replace('.js','');
+              const obj = { name: String(nm).toLowerCase(), command:[String(nm).toLowerCase()], execute: pl };
+              global.plugins.set(String(nm).toLowerCase(), obj);
+              global.wolfCommands[String(nm).toLowerCase()] = pl;
+              t++; continue;
+            }
+            if(pl&&pl.name&&pl.execute){
+              global.plugins.set(pl.name.toLowerCase(),pl);
+              global.wolfCommands[pl.name.toLowerCase()]=pl.execute;
+              if(pl.alias) for(const a of pl.alias) {
+                global.plugins.set(a.toLowerCase(),pl);
+                global.wolfCommands[a.toLowerCase()]=pl.execute;
+              }
+              t++;
+            } else if(pl&&pl.command&&pl.execute){
+              const cmds = Array.isArray(pl.command) ? pl.command : [pl.command];
+              for(const cmd of cmds){
+                const clean=String(cmd).toLowerCase();
+                global.plugins.set(clean, pl);
+                global.wolfCommands[clean]=pl.execute;
+              }
+              t++;
+            } else if(pl && pl.execute && pl.cmd){
+              const cmds = Array.isArray(pl.cmd) ? pl.cmd : [pl.cmd];
+              for(const cmd of cmds){ global.plugins.set(String(cmd).toLowerCase(), pl); global.wolfCommands[String(cmd).toLowerCase()]=pl.execute; }
+              t++;
+            } else if(pl && pl.run && pl.name){
+              // META AI V2 style: { name, run(sock,m,jid,cmd,args...) }
+              const wrapped = async (sock, m, ctx) => {
+                return await pl.run(sock, m, m.chat, ctx.command, ctx.args, ctx.text, m.isOwner, m.isGroup, m.sender);
+              };
+              global.plugins.set(pl.name.toLowerCase(), { name: pl.name, execute: wrapped });
+              global.wolfCommands[pl.name.toLowerCase()] = wrapped;
+              t++;
+            }
+          }
+        }catch(e){ console.log(`Load err ${it}: ${e.message}`)}
+      }
+    }
+  }
+  rd(pPath);
+  console.log(chalk.green(`✅ WOLF WIRED ${t} files | ${Object.keys(global.wolfCommands).length} CMDS from ${pPath}`));
+  console.log(chalk.cyan(`CMDS: ${Object.keys(global.wolfCommands).join(', ')}`));
+}
+loadPlugins();
+
+const groupCache=new Map();
+async function getCachedMeta(sock,jid){
+  const c=groupCache.get(jid); if(c && Date.now()-c.time<90000) return c.meta;
+  try{ const meta=await sock.groupMetadata(jid); groupCache.set(jid,{meta,time:Date.now()}); if(groupCache.size>50) groupCache.delete(groupCache.keys().next().value); return meta; }catch{ return null; }
+}
+
+async function startConnection(){
+  if(!global.appStarted){
+    const app=express();
+    app.use(express.json());
+    app.use(express.urlencoded({ extended: true }));
+    // FIX: public/index.html WILL LOAD NOW
+    app.use(express.static(path.join(__dirname,'public')));
+    app.use(express.static(__dirname));
+    app.use(express.static(path.join(__dirname,'../public')));
+    app.get('/',(req,res)=>{
+      const idx1 = path.join(__dirname,'public/index.html');
+      const idx2 = path.join(__dirname,'index.html');
+      const idx3 = path.join(__dirname,'../public/index.html');
+      if(fs.existsSync(idx1)) return res.sendFile(idx1);
+      if(fs.existsSync(idx2)) return res.sendFile(idx2);
+      if(fs.existsSync(idx3)) return res.sendFile(idx3);
+      res.send(`<h1>🐺 WOLF XMD TITAN</h1><p>Owner: 239166265317</p><p>CMDS: ${Object.keys(global.wolfCommands).length}</p><p><a href="/api/status">Status</a> | <a href="/getcode?number=239166265317">Get Code</a></p>`);
+    });
+    app.get('/health',(req,res)=>res.send('WOLF LIVE'));
+    app.get('/api/status',(req,res)=>res.json({ botName:"WOLF XMD TITAN", owner:"239166265317", status:global.connectionStatus, isConnected:global.isConnected, pairingCode:global.pairingCode, plugins:Object.keys(global.wolfCommands).length, cmds:Object.keys(global.wolfCommands) }));
+    app.post('/api/pair',async(req,res)=>{
+      try{
+        let phone=(req.body.phone||req.body.number||'').replace(/[^0-9]/g,'');
+        if(phone.length<10) return res.json({success:false,message:'Enter valid number e.g 239166265317'});
+        if(!global.sock) return res.json({success:false,message:'Bot starting... wait 5 sec'});
+        if(global.isConnected) return res.json({success:false,message:'Already linked!'});
+        const code=await global.sock.requestPairingCode(phone);
+        global.pairingCode=code; global.currentPairingNumber=phone; global.connectionStatus=`CODE: ${code}`;
+        console.log(chalk.yellow(`🔑 WOLF CODE ${phone}: ${code}`));
+        res.json({success:true,code});
+      }catch(e){ console.log('Pair fail',e.message); res.json({success:false,message:e.message}); }
+    });
+    app.get('/getcode',async(req,res)=>{
+      try{
+        let phone=(req.query.number||req.query.phone||'').replace(/[^0-9]/g,'');
+        if(!phone) return res.json({success:false,message:'Add ?number=239166265317'});
+        if(!global.sock) return res.json({success:false,message:'Bot starting... wait 5 sec'});
+        if(global.isConnected) return res.json({success:false,message:'Already linked!'});
+        const code=await global.sock.requestPairingCode(phone);
+        global.pairingCode=code; global.currentPairingNumber=phone; global.connectionStatus=`CODE: ${code}`;
+        console.log(chalk.green.bold(`🔑 WOLF CODE ${phone}: ${code}`));
+        res.json({success:true, code, phone, codeFormatted: code.match(/.{1,4}/g)?.join("-")});
+      }catch(e){ console.log('Pair fail',e.message); res.json({success:false,message:e.message}); }
+    });
+    app.post('/api/logout',async(req,res)=>{ try{ if(global.sock) await global.sock.logout().catch(()=>{}); }catch{} try{ fs.rmSync(`./${config.sessionName}`,{recursive:true,force:true}); fs.rmSync(`./auth`,{recursive:true,force:true}); }catch{} global.sock=null; global.isConnected=false; res.json({success:true}); setTimeout(()=>initBaileys(),2000); });
+    const PORT=config.PORT||process.env.PORT||10000;
+    app.listen(PORT,'0.0.0.0',()=>console.log(chalk.cyan(`🌐 WOLF Dashboard ${PORT} | ${Object.keys(global.wolfCommands).length} CMDS`)));
+    global.appStarted=true;
+  }
+
+  async function initBaileys(){
+    try{
+      const authPath=`./${config.sessionName}`;
+      if((!fs.existsSync(authPath)||fs.readdirSync(authPath).length===0)&&process.env.SESSION_DATA){
+        fs.mkdirSync(authPath,{recursive:true}); let d; try{ d=JSON.parse(process.env.SESSION_DATA); }catch{ d=JSON.parse(Buffer.from(process.env.SESSION_DATA,'base64').toString()); } fs.writeFileSync(path.join(authPath,'creds.json'),JSON.stringify(d,null,2));
+      }
+    }catch(e){}
+    const {state,saveCreds}=await useMultiFileAuthState(`./${config.sessionName}`);
+    const {version}=await fetchLatestBaileysVersion();
+    const sock=makeWASocket({
+      version,
+      logger:pino({level:'silent'}),
+      printQRInTerminal:false,
+      browser:Browsers.macOS('Safari'),
+      auth:{creds:state.creds,keys:makeCacheableSignalKeyStore(state.keys,pino({level:'silent'}))},
+      markOnlineOnConnect:true,
+      connectTimeoutMs:60000,
+      keepAliveIntervalMs:10000,
+      syncFullHistory:false,
+      retryRequestDelayMs:2000,
+      msgRetryCounterCache,
+      getMessage,
+      generateHighQualityLinkPreview: false,
+      shouldSyncHistoryMessage: () => false
+    });
+    global.sock=sock; sock.ev.on('creds.update',saveCreds);
+
+    sock.ev.on('call',async(calls)=>{ for(let c of calls){ try{ if(global.db.settings.anticall) await sock.rejectCall(c.id,c.from); }catch{} } });
+    sock.ev.on('messages.update',async(updates)=>{ for(let up of updates){ if(up.update.message===null){ const saved=global.db.messages[up.key.id]; if(!saved) continue; const g=getGroup(saved.from); if(!g.antidelete) continue; try{ await sock.sendMessage(saved.from,{text:`*🔍 ANTI-DELETE WOLF*\nFrom: @${saved.sender.split('@')[0]}\n> ${saved.text?.slice(0,300)}`,mentions:[saved.sender]}); }catch{} } } });
+
+    sock.ev.on('connection.update',async(update)=>{
+      const {connection,lastDisconnect}=update;
+      if(connection==='connecting') global.connectionStatus='Connecting WOLF...';
+      if(connection==='open'){
+        global.isConnected=true; global.connectionStatus='ONLINE ✅ WOLF'; console.log(chalk.green.bold(`\n✅ WOLF ONLINE! ${Object.keys(global.wolfCommands).length} CMDS\n`));
+      }
+      if(connection==='close'){
+        const code=lastDisconnect?.error?.output?.statusCode; console.log(chalk.red(`❌ Closed ${code}`)); global.isConnected=false; global.sock=null; groupCache.clear();
+        if([DisconnectReason.loggedOut,401,440,405].includes(code)){ try{ fs.rmSync(`./${config.sessionName}`,{recursive:true,force:true}); }catch{} global.connectionStatus='LOGGED OUT'; setTimeout(()=>initBaileys(),3000); }
+        else{ global.connectionStatus='Reconnecting WOLF...'; setTimeout(()=>initBaileys(),5000); }
+      }
+    });
+
+    sock.ev.on('messages.upsert',async({messages,type})=>{
+      try{
+        if(type!=='notify') return;
+        for(const m of messages){
+          try{
+            if(!m?.message) continue;
+            storeMsg(m);
+            const from=m.key.remoteJid;
+            if(from==='status@broadcast'){ if(global.db.settings.autostatus){ sock.readMessages([m.key]).catch(()=>{}); } continue; }
+            const sender=m.key.participant||from; const isGroup=from.endsWith('@g.us');
+            const body=m.message.conversation||m.message.extendedTextMessage?.text||m.message.imageMessage?.caption||m.message.videoMessage?.caption||m.message.extendedTextMessage?.contextInfo?.quotedMessage?.conversation||"";
+            if(m.key.id){ global.db.messages[m.key.id]={text:body,sender,from,time:Date.now(), message:m.message}; if(Object.keys(global.db.messages).length>150) delete global.db.messages[Object.keys(global.db.messages)[0]]; }
+            if(global.db.settings.autoread) sock.readMessages([m.key]).catch(()=>{});
+
+            let meta=null, isAdmin=false, isBotAdmin=false, participants=[];
+            if(isGroup){
+              meta=await getCachedMeta(sock,from);
+              participants=meta?.participants||[];
+              const botBare = bare(sock.user.id);
+              const senderBare = bare(sender);
+              const me=participants.find(p=>bare(p.id)===botBare);
+              const senderP=participants.find(p=>bare(p.id)===senderBare);
+              isBotAdmin=isAdminFlag(me);
+              isAdmin=isAdminFlag(senderP);
+            }
+            const isOwner=bare(sender)==='239166265317'||global.db.sudo.includes(sender)||global.db.sudo.some(s=>bare(s)==='239166265317')||m.key.fromMe;
+            const isSenderAdmin=isAdmin||isOwner;
+
+            if(isGroup && !m.key.fromMe){
+              if(isAntilinkOn(from) && !isSenderAdmin){
+                const hasLink=/(https?:\/\/|www\.|chat\.whatsapp\.com|wa\.me\/|t\.me\/|instagram\.com|youtube\.com|discord\.gg)/i.test(body);
+                if(hasLink){
+                  if(isBotAdmin){
+                    try{ await sock.sendMessage(from,{delete:m.key}).catch(()=>{}); await sock.sendMessage(from,{text:`⚠️ @${bare(sender)} links not allowed!`,mentions:[sender]}).catch(()=>{}); }catch{}
+                  } else {
+                    await sock.sendMessage(from,{text:`⚠️ @${bare(sender)} link detected but I'm not admin, make me admin to delete!`,mentions:[sender]}).catch(()=>{});
+                  }
+                  continue;
+                }
+              }
+              const g=getGroup(from);
+              if(g.antibot && !isSenderAdmin && m.key.id && m.key.id.startsWith('BAE5')){
+                if(isBotAdmin){ try{ await sock.sendMessage(from,{delete:m.key}).catch(()=>{}); }catch{} }
+                continue;
+              }
+              if((global.db.settings.autovv||g.antiviewonce)&&(m.message.viewOnceMessage||m.message.viewOnceMessageV2||m.message.viewOnceMessageV2Extension)){
+                (async()=>{ try{ const q=m.message.viewOnceMessage||m.message.viewOnceMessageV2Extension; const inner=q?.message||q; if(inner?.imageMessage) await sock.sendMessage(from,{image:inner.imageMessage},{quoted:m}).catch(()=>{}); else if(inner?.videoMessage) await sock.sendMessage(from,{video:inner.videoMessage},{quoted:m}).catch(()=>{}); else await sock.sendMessage(from,{forward:q},{quoted:m}).catch(()=>{}); }catch{} })();
+              }
+            }
+
+            if(!body) continue;
+            const prefix=global.db.settings.prefix||config.prefix||'.'; if(!body.trim().startsWith(prefix)) continue;
+            const args=body.trim().slice(prefix.length).trim().split(/ +/); const rawCmd=args.shift()?.toLowerCase(); if(!rawCmd) continue;
+            const cmdName=rawCmd.replace(/[^a-z0-9]/g,'')||rawCmd;
+            let plugin = global.plugins.get(rawCmd) || global.plugins.get(cmdName) || global.wolfCommands[rawCmd] || global.wolfCommands[cmdName];
+            if(!plugin){
+              const fn = global.wolfCommands[rawCmd] || global.wolfCommands[cmdName];
+              if(fn && typeof fn === 'function'){ plugin = { execute: fn, isWolfStyle: true }; }
+            }
+            if(!plugin) { console.log(chalk.yellow(`No plugin for .${rawCmd}`)); continue; }
+            if(global.db.banned.includes(sender)) continue;
+
+            m.body=body; m.text=args.join(' '); m.args=args; m.sender=sender; m.chat=from; m.from=from; m.isGroup=isGroup; m.fromMe=m.key.fromMe; m.pushName=m.pushName||"ALPHA";
+            m.isOwner=isOwner;
+            m.isAdmin=isSenderAdmin; m.isBotAdmin=isBotAdmin; m.isGroupAdmin=isSenderAdmin; m.isBotGroupAdmin=isBotAdmin;
+            m.groupMetadata=meta; m.participants=participants; m.metadata=meta;
+            m.botNumber=sock.user.id; m.botJid=sock.user.id;
+            m.sock=sock; m.conn=sock; m.client=sock;
+            m.reply=async(txt)=>await sock.sendMessage(from,{text:typeof txt==='string'?txt:String(txt)},{quoted:m});
+            m.download=async()=>await downloadMediaMessage(m,'buffer',{},{logger:pino({level:"silent"}),reuploadRequest:sock.updateMediaMessage});
+
+            console.log(chalk.green(`▶️ ${rawCmd} ${bare(sender)} admin:${isSenderAdmin} botAdmin:${isBotAdmin}`));
+
+            const execFn = typeof plugin === 'function' ? plugin : plugin.execute;
+            if(typeof execFn !== 'function') continue;
+            const fnSrc = String(execFn).slice(0,300);
+            const firstParamMatch = fnSrc.match(/^\s*(?:async\s+)?(?:\(?\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)/);
+            const firstParam = (firstParamMatch ? firstParamMatch[1] : '').toLowerCase();
+            const isMFirst = ['m','msg','message','mek','chat','ctx','messa','msginfo'].includes(firstParam);
+            const isSockFirst = ['sock','client','conn','alpha','bot','wolf','s'].includes(firstParam);
+
+            const ctx = { sock, conn: sock, client: sock, prefix, args, command:cmdName, text:args.join(' '), config, plugins:global.plugins, from, sender, getGroup, isOwner:m.isOwner, isAdmin:m.isAdmin, isBotAdmin:m.isBotAdmin, groupMetadata:meta, participants, reply:m.reply };
+            try{ sock.sock = sock; sock.prefix = prefix; sock.args = args; sock.command = cmdName; sock.text = args.join(' '); }catch{}
+
+            const tries = [];
+            if(plugin.isWolfStyle || isSockFirst || execFn.length===3) tries.push('wolf');
+            if(isMFirst) tries.push('m-ctx');
+            if(!tries.includes('wolf')) tries.push('wolf');
+            if(!tries.includes('m-ctx')) tries.push('m-ctx');
+            tries.push('m-sock');
+
+            let ok=false, lastErr=null;
+            for(const style of tries){
+              try{
+                if(style==='wolf') await execFn(sock, m, ctx);
+                else if(style==='m-ctx') await execFn(m, ctx);
+                            else if(style==='m-sock') await execFn(m, sock, ctx);
+                ok=true; break;
+              }catch(e){ lastErr=e; }
+            }
+            if(!ok && lastErr) console.log(chalk.red(`Exec fail .${rawCmd}: ${lastErr.message}`));
+
+          }catch(e){ console.log('Msg loop err:', e.message); }
+        }
+      }catch(e){ console.log('Upsert err:', e.message); }
+    });
+  }
+
+  initBaileys();
+}
+
+startConnection();
