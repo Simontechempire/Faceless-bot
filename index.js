@@ -1,4 +1,4 @@
-// 🐺 WOLF XMD TITAN - V3 - FIX ADMIN + DISPATCH + ANTILINK STATE
+// 👤 FACELESS BOT - V2 - FIX ADMIN + DISPATCH + ANTILINK STATE
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -38,10 +38,10 @@ function isAdminFlag(p){ return p && (p.admin==='admin'||p.admin==='superadmin'|
 
 let config;
 try { config = require('./settings'); } catch {
-  config = { botName: "ALPHA AND OMEGA WOLF XMD", ownerName: "ALPHA", ownerNumber: "239166265317", prefix: ".", sessionName: "session", PORT: process.env.PORT || 10000 };
+  config = { botName: "FACELESS", ownerName: "ALPHA", ownerNumber: "239166265317", prefix: ".", sessionName: "session", PORT: process.env.PORT || 10000 };
 }
 config.ownerNumber = "239166265317";
-config.botName = "🐺 WOLF XMD TITAN";
+config.botName = "👤 FACELESS";
 config.sessionName = "session";
 
 global.sock = null; global.isConnected = false; global.connectionStatus = '⚠️ NOT LINKED'; global.pairingCode = null; global.currentPairingNumber = null; global.lastPairTime = 0; global.appStarted = false;
@@ -76,8 +76,10 @@ function isAntilinkOn(jid){
 global.getGroup = getGroup;
 global.isAntilinkOn = isAntilinkOn;
 
-global.plugins=new Map();
-global.wolfCommands={};
+global.plugins = new Map();
+global.facelessCommands = {};
+global.wolfCommands = global.facelessCommands; // alias for old plugins
+global.metaPlugins = [];
 
 function loadPlugins(){
   const possiblePaths = [path.join(__dirname,'plugins'), path.join(__dirname,'../plugins'), path.join(__dirname,'src/plugins')];
@@ -85,7 +87,9 @@ function loadPlugins(){
   for(const pp of possiblePaths){ if(fs.existsSync(pp)){ pPath=pp; break; } }
   if(!pPath) { console.log(chalk.red('No plugins folder found')); return; }
   global.plugins.clear();
-  global.wolfCommands={};
+  global.facelessCommands = {};
+  global.wolfCommands = global.facelessCommands;
+  global.metaPlugins = [];
   let t=0;
   const IGNORED = ['main.js','index.js','connection.js','settings.js','config.js','app.js','bot.js','server.js'];
   function rd(dir){
@@ -108,15 +112,19 @@ function loadPlugins(){
               const nm = pl.name || pl.command || it.replace('.js','');
               const obj = { name: String(nm).toLowerCase(), command:[String(nm).toLowerCase()], execute: pl };
               global.plugins.set(String(nm).toLowerCase(), obj);
-              global.wolfCommands[String(nm).toLowerCase()] = pl;
+              global.facelessCommands[String(nm).toLowerCase()] = pl;
               t++; continue;
             }
             if(pl&&pl.name&&pl.execute){
               global.plugins.set(pl.name.toLowerCase(),pl);
-              global.wolfCommands[pl.name.toLowerCase()]=pl.execute;
+              global.facelessCommands[pl.name.toLowerCase()]=pl.execute;
               if(pl.alias) for(const a of pl.alias) {
                 global.plugins.set(a.toLowerCase(),pl);
-                global.wolfCommands[a.toLowerCase()]=pl.execute;
+                global.facelessCommands[a.toLowerCase()]=pl.execute;
+              }
+              if(pl.command){
+                const cmds = Array.isArray(pl.command) ? pl.command : [pl.command];
+                for(const cmd of cmds){ global.plugins.set(String(cmd).toLowerCase(), pl); global.facelessCommands[String(cmd).toLowerCase()]=pl.execute; }
               }
               t++;
             } else if(pl&&pl.command&&pl.execute){
@@ -124,20 +132,27 @@ function loadPlugins(){
               for(const cmd of cmds){
                 const clean=String(cmd).toLowerCase();
                 global.plugins.set(clean, pl);
-                global.wolfCommands[clean]=pl.execute;
+                global.facelessCommands[clean]=pl.execute;
               }
               t++;
             } else if(pl && pl.execute && pl.cmd){
               const cmds = Array.isArray(pl.cmd) ? pl.cmd : [pl.cmd];
-              for(const cmd of cmds){ global.plugins.set(String(cmd).toLowerCase(), pl); global.wolfCommands[String(cmd).toLowerCase()]=pl.execute; }
+              for(const cmd of cmds){ global.plugins.set(String(cmd).toLowerCase(), pl); global.facelessCommands[String(cmd).toLowerCase()]=pl.execute; }
               t++;
             } else if(pl && pl.run && pl.name){
-              // META AI V2 style: { name, run(sock,m,jid,cmd,args...) }
+              // FACELESS style: { name, run(sock,m,jid,cmd,args...) } - multi-command file
               const wrapped = async (sock, m, ctx) => {
                 return await pl.run(sock, m, m.chat, ctx.command, ctx.args, ctx.text, m.isOwner, m.isGroup, m.sender);
               };
-              global.plugins.set(pl.name.toLowerCase(), { name: pl.name, execute: wrapped });
-              global.wolfCommands[pl.name.toLowerCase()] = wrapped;
+              const obj = { name: pl.name, execute: wrapped, isFacelessStyle: true };
+              global.plugins.set(pl.name.toLowerCase(), obj);
+              global.facelessCommands[pl.name.toLowerCase()] = wrapped;
+              // Keep in meta list so .kick inside moderator.js still works
+              global.metaPlugins.push(obj);
+              if(pl.commands){
+                for(const c of pl.commands){ global.plugins.set(String(c).toLowerCase(), obj); global.facelessCommands[String(c).toLowerCase()]=wrapped; }
+              }
+              if(pl.alias) for(const a of pl.alias){ global.plugins.set(String(a).toLowerCase(), obj); global.facelessCommands[String(a).toLowerCase()]=wrapped; }
               t++;
             }
           }
@@ -146,8 +161,9 @@ function loadPlugins(){
     }
   }
   rd(pPath);
-  console.log(chalk.green(`✅ WOLF WIRED ${t} files | ${Object.keys(global.wolfCommands).length} CMDS from ${pPath}`));
-  console.log(chalk.cyan(`CMDS: ${Object.keys(global.wolfCommands).join(', ')}`));
+  global.wolfCommands = global.facelessCommands;
+  console.log(chalk.green(`✅ FACELESS WIRED ${t} files | ${Object.keys(global.facelessCommands).length} CMDS + ${global.metaPlugins.length} FACELESS plugins from ${pPath}`));
+  console.log(chalk.cyan(`CMDS: ${Object.keys(global.facelessCommands).join(', ')}`));
 }
 loadPlugins();
 
@@ -162,7 +178,6 @@ async function startConnection(){
     const app=express();
     app.use(express.json());
     app.use(express.urlencoded({ extended: true }));
-    // FIX: public/index.html WILL LOAD NOW
     app.use(express.static(path.join(__dirname,'public')));
     app.use(express.static(__dirname));
     app.use(express.static(path.join(__dirname,'../public')));
@@ -173,10 +188,10 @@ async function startConnection(){
       if(fs.existsSync(idx1)) return res.sendFile(idx1);
       if(fs.existsSync(idx2)) return res.sendFile(idx2);
       if(fs.existsSync(idx3)) return res.sendFile(idx3);
-      res.send(`<h1>🐺 WOLF XMD TITAN</h1><p>Owner: 239166265317</p><p>CMDS: ${Object.keys(global.wolfCommands).length}</p><p><a href="/api/status">Status</a> | <a href="/getcode?number=239166265317">Get Code</a></p>`);
+      res.send(`<h1>👤 FACELESS</h1><p>Owner: 239166265317</p><p>CMDS: ${Object.keys(global.facelessCommands).length}</p><p><a href="/api/status">Status</a> | <a href="/getcode?number=239166265317">Get Code</a></p>`);
     });
-    app.get('/health',(req,res)=>res.send('WOLF LIVE'));
-    app.get('/api/status',(req,res)=>res.json({ botName:"WOLF XMD TITAN", owner:"239166265317", status:global.connectionStatus, isConnected:global.isConnected, pairingCode:global.pairingCode, plugins:Object.keys(global.wolfCommands).length, cmds:Object.keys(global.wolfCommands) }));
+    app.get('/health',(req,res)=>res.send('FACELESS LIVE'));
+    app.get('/api/status',(req,res)=>res.json({ botName:"FACELESS", owner:"239166265317", status:global.connectionStatus, isConnected:global.isConnected, pairingCode:global.pairingCode, plugins:Object.keys(global.facelessCommands).length, cmds:Object.keys(global.facelessCommands) }));
     app.post('/api/pair',async(req,res)=>{
       try{
         let phone=(req.body.phone||req.body.number||'').replace(/[^0-9]/g,'');
@@ -185,7 +200,7 @@ async function startConnection(){
         if(global.isConnected) return res.json({success:false,message:'Already linked!'});
         const code=await global.sock.requestPairingCode(phone);
         global.pairingCode=code; global.currentPairingNumber=phone; global.connectionStatus=`CODE: ${code}`;
-        console.log(chalk.yellow(`🔑 WOLF CODE ${phone}: ${code}`));
+        console.log(chalk.yellow(`🔑 FACELESS CODE ${phone}: ${code}`));
         res.json({success:true,code});
       }catch(e){ console.log('Pair fail',e.message); res.json({success:false,message:e.message}); }
     });
@@ -197,13 +212,13 @@ async function startConnection(){
         if(global.isConnected) return res.json({success:false,message:'Already linked!'});
         const code=await global.sock.requestPairingCode(phone);
         global.pairingCode=code; global.currentPairingNumber=phone; global.connectionStatus=`CODE: ${code}`;
-        console.log(chalk.green.bold(`🔑 WOLF CODE ${phone}: ${code}`));
+        console.log(chalk.green.bold(`🔑 FACELESS CODE ${phone}: ${code}`));
         res.json({success:true, code, phone, codeFormatted: code.match(/.{1,4}/g)?.join("-")});
       }catch(e){ console.log('Pair fail',e.message); res.json({success:false,message:e.message}); }
     });
     app.post('/api/logout',async(req,res)=>{ try{ if(global.sock) await global.sock.logout().catch(()=>{}); }catch{} try{ fs.rmSync(`./${config.sessionName}`,{recursive:true,force:true}); fs.rmSync(`./auth`,{recursive:true,force:true}); }catch{} global.sock=null; global.isConnected=false; res.json({success:true}); setTimeout(()=>initBaileys(),2000); });
     const PORT=config.PORT||process.env.PORT||10000;
-    app.listen(PORT,'0.0.0.0',()=>console.log(chalk.cyan(`🌐 WOLF Dashboard ${PORT} | ${Object.keys(global.wolfCommands).length} CMDS`)));
+    app.listen(PORT,'0.0.0.0',()=>console.log(chalk.cyan(`🌐 FACELESS Dashboard ${PORT} | ${Object.keys(global.facelessCommands).length} CMDS`)));
     global.appStarted=true;
   }
 
@@ -235,18 +250,18 @@ async function startConnection(){
     global.sock=sock; sock.ev.on('creds.update',saveCreds);
 
     sock.ev.on('call',async(calls)=>{ for(let c of calls){ try{ if(global.db.settings.anticall) await sock.rejectCall(c.id,c.from); }catch{} } });
-    sock.ev.on('messages.update',async(updates)=>{ for(let up of updates){ if(up.update.message===null){ const saved=global.db.messages[up.key.id]; if(!saved) continue; const g=getGroup(saved.from); if(!g.antidelete) continue; try{ await sock.sendMessage(saved.from,{text:`*🔍 ANTI-DELETE WOLF*\nFrom: @${saved.sender.split('@')[0]}\n> ${saved.text?.slice(0,300)}`,mentions:[saved.sender]}); }catch{} } } });
+    sock.ev.on('messages.update',async(updates)=>{ for(let up of updates){ if(up.update.message===null){ const saved=global.db.messages[up.key.id]; if(!saved) continue; const g=getGroup(saved.from); if(!g.antidelete) continue; try{ await sock.sendMessage(saved.from,{text:`*🔍 ANTI-DELETE FACELESS*\nFrom: @${saved.sender.split('@')[0]}\n> ${saved.text?.slice(0,300)}`,mentions:[saved.sender]}); }catch{} } } });
 
     sock.ev.on('connection.update',async(update)=>{
       const {connection,lastDisconnect}=update;
-      if(connection==='connecting') global.connectionStatus='Connecting WOLF...';
+      if(connection==='connecting') global.connectionStatus='Connecting FACELESS...';
       if(connection==='open'){
-        global.isConnected=true; global.connectionStatus='ONLINE ✅ WOLF'; console.log(chalk.green.bold(`\n✅ WOLF ONLINE! ${Object.keys(global.wolfCommands).length} CMDS\n`));
+        global.isConnected=true; global.connectionStatus='ONLINE ✅ FACELESS'; console.log(chalk.green.bold(`\n✅ FACELESS ONLINE! ${Object.keys(global.facelessCommands).length} CMDS\n`));
       }
       if(connection==='close'){
         const code=lastDisconnect?.error?.output?.statusCode; console.log(chalk.red(`❌ Closed ${code}`)); global.isConnected=false; global.sock=null; groupCache.clear();
         if([DisconnectReason.loggedOut,401,440,405].includes(code)){ try{ fs.rmSync(`./${config.sessionName}`,{recursive:true,force:true}); }catch{} global.connectionStatus='LOGGED OUT'; setTimeout(()=>initBaileys(),3000); }
-        else{ global.connectionStatus='Reconnecting WOLF...'; setTimeout(()=>initBaileys(),5000); }
+        else{ global.connectionStatus='Reconnecting FACELESS...'; setTimeout(()=>initBaileys(),5000); }
       }
     });
 
@@ -304,12 +319,14 @@ async function startConnection(){
             const prefix=global.db.settings.prefix||config.prefix||'.'; if(!body.trim().startsWith(prefix)) continue;
             const args=body.trim().slice(prefix.length).trim().split(/ +/); const rawCmd=args.shift()?.toLowerCase(); if(!rawCmd) continue;
             const cmdName=rawCmd.replace(/[^a-z0-9]/g,'')||rawCmd;
-            let plugin = global.plugins.get(rawCmd) || global.plugins.get(cmdName) || global.wolfCommands[rawCmd] || global.wolfCommands[cmdName];
-            if(!plugin){
-              const fn = global.wolfCommands[rawCmd] || global.wolfCommands[cmdName];
-              if(fn && typeof fn === 'function'){ plugin = { execute: fn, isWolfStyle: true }; }
+
+            // FACELESS FIX: if direct lookup fails, try ALL FACELESS plugins (moderator.js handles kick, mute, etc)
+            let plugin = global.plugins.get(rawCmd) || global.plugins.get(cmdName) || global.facelessCommands[rawCmd] || global.facelessCommands[cmdName];
+            if(typeof plugin === 'function') plugin = { execute: plugin, isFacelessStyle: true };
+            if(!plugin && global.metaPlugins.length){
+              // Build ctx first, then try meta plugins below - handled after m setup
             }
-            if(!plugin) { console.log(chalk.yellow(`No plugin for .${rawCmd}`)); continue; }
+            if(!plugin && !global.metaPlugins.length) { console.log(chalk.yellow(`No plugin for .${rawCmd}`)); continue; }
             if(global.db.banned.includes(sender)) continue;
 
             m.body=body; m.text=args.join(' '); m.args=args; m.sender=sender; m.chat=from; m.from=from; m.isGroup=isGroup; m.fromMe=m.key.fromMe; m.pushName=m.pushName||"ALPHA";
@@ -323,30 +340,43 @@ async function startConnection(){
 
             console.log(chalk.green(`▶️ ${rawCmd} ${bare(sender)} admin:${isSenderAdmin} botAdmin:${isBotAdmin}`));
 
+            const ctx = { sock, conn: sock, client: sock, prefix, args, command:cmdName, text:args.join(' '), config, client: sock, prefix, args, command:cmdName, text:args.join(' '), config, plugins:global.plugins, from, sender, getGroup, isOwner:m.isOwner, isAdmin:m.isAdmin, isBotAdmin:m.isBotAdmin, groupMetadata:meta, participants, reply:m.reply };
+            try{ sock.sock = sock; sock.prefix = prefix; sock.args = args; sock.command = cmdName; sock.text = args.join(' '); }catch{}
+
+            // If no direct plugin, try every FACELESS plugin until one returns true
+            if(!plugin){
+              let handled=false;
+              for(const mp of global.metaPlugins){
+                try{
+                  const r = await mp.execute(sock, m, ctx);
+                  if(r){ handled=true; break; }
+                }catch(e){ /* try next */ }
+              }
+              if(!handled) console.log(chalk.yellow(`No plugin handled .${rawCmd}`));
+              continue;
+            }
+
             const execFn = typeof plugin === 'function' ? plugin : plugin.execute;
             if(typeof execFn !== 'function') continue;
             const fnSrc = String(execFn).slice(0,300);
             const firstParamMatch = fnSrc.match(/^\s*(?:async\s+)?(?:\(?\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)/);
             const firstParam = (firstParamMatch ? firstParamMatch[1] : '').toLowerCase();
             const isMFirst = ['m','msg','message','mek','chat','ctx','messa','msginfo'].includes(firstParam);
-            const isSockFirst = ['sock','client','conn','alpha','bot','wolf','s'].includes(firstParam);
-
-            const ctx = { sock, conn: sock, client: sock, prefix, args, command:cmdName, text:args.join(' '), config, plugins:global.plugins, from, sender, getGroup, isOwner:m.isOwner, isAdmin:m.isAdmin, isBotAdmin:m.isBotAdmin, groupMetadata:meta, participants, reply:m.reply };
-            try{ sock.sock = sock; sock.prefix = prefix; sock.args = args; sock.command = cmdName; sock.text = args.join(' '); }catch{}
+            const isSockFirst = ['sock','client','conn','alpha','bot','faceless','s'].includes(firstParam);
 
             const tries = [];
-            if(plugin.isWolfStyle || isSockFirst || execFn.length===3) tries.push('wolf');
+            if(plugin.isFacelessStyle || isSockFirst || execFn.length===3) tries.push('faceless');
             if(isMFirst) tries.push('m-ctx');
-            if(!tries.includes('wolf')) tries.push('wolf');
+            if(!tries.includes('faceless')) tries.push('faceless');
             if(!tries.includes('m-ctx')) tries.push('m-ctx');
             tries.push('m-sock');
 
             let ok=false, lastErr=null;
             for(const style of tries){
               try{
-                if(style==='wolf') await execFn(sock, m, ctx);
+                if(style==='faceless') await execFn(sock, m, ctx);
                 else if(style==='m-ctx') await execFn(m, ctx);
-                            else if(style==='m-sock') await execFn(m, sock, ctx);
+                else if(style==='m-sock') await execFn(m, sock, ctx);
                 ok=true; break;
               }catch(e){ lastErr=e; }
             }
