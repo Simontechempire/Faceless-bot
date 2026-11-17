@@ -1,264 +1,233 @@
-const { facelessReply, sendAwait } = require('../lib/function');
+// 💰 FACELESS - ECONOMY PLUGIN - REAL HANDLER
 const fs = require('fs');
 const path = require('path');
 
-const econPath = path.join(__dirname, '../database/economy.json');
+const DB_DIR = path.join(__dirname, '..', 'database');
+const DB = path.join(DB_DIR, 'economy.json');
 
-function loadEcon(){
-  try{ if(fs.existsSync(econPath)) return JSON.parse(fs.readFileSync(econPath,'utf8')); }catch{}
-  return {};
+function load(){
+  try{
+    if(!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR,{recursive:true});
+    if(!fs.existsSync(DB)) fs.writeFileSync(DB, JSON.stringify({},null,2));
+    return JSON.parse(fs.readFileSync(DB,'utf8')||'{}');
+  }catch{ return {}; }
 }
-function saveEcon(d){
-  try{ fs.mkdirSync(path.dirname(econPath),{recursive:true}); fs.writeFileSync(econPath, JSON.stringify(d,null,2)); }catch{}
+function save(d){ try{ fs.writeFileSync(DB, JSON.stringify(d,null,2)); }catch{} }
+function getUser(id){
+  const db = load();
+  if(!db[id]) db[id] = { wallet:1000, bank:0, inventory:[], lastDaily:0, lastWeekly:0, lastMonthly:0, lastWork:0, lastCrime:0, lastBeg:0, lastFish:0, lastHunt:0, lastMine:0, lastBonus:0, xp:0, level:1 };
+  save(db);
+  return db[id];
 }
-function getUser(jid){
-  const db = loadEcon();
-  if(!db[jid]) db[jid] = { wallet: 0, bank: 0, lastDaily: 0, lastWork: 0, items: [] };
-  return { db, user: db[jid] };
+function setUser(id, data){ const db=load(); db[id]=data; save(db); }
+function fmt(n){ return Number(n).toLocaleString(); }
+function cooldown(last, ms){ const left = last + ms - Date.now(); return left > 0 ? left : 0; }
+function timeLeft(ms){ const m=Math.floor(ms/60000), s=Math.floor((ms%60000)/1000), h=Math.floor(m/60); return h>0?`${h}h ${m%60}m` : m>0?`${m}m ${s}s` : `${s}s`; }
+function getTarget(m, args){
+  const q = m.message?.extendedTextMessage?.contextInfo?.participant;
+  if(q) return q;
+  const men = m.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+  if(men?.length) return men[0];
+  let num = (args[0]||'').replace(/[^0-9]/g,'');
+  if(num && num.length>=10) return num+'@s.whatsapp.net';
+  return null;
 }
-function addCoins(jid, amount){
-  const { db, user } = getUser(jid);
-  user.wallet += amount;
-  db[jid] = user;
-  saveEcon(db);
-  return user.wallet;
-}
-function removeCoins(jid, amount){
-  const { db, user } = getUser(jid);
-  user.wallet = Math.max(0, user.wallet - amount);
-  db[jid] = user;
-  saveEcon(db);
-  return user.wallet;
-}
+function rand(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
 
-const shopItems = [
-  { id: 'vip', name: 'VIP Badge', price: 5000, desc: 'Show VIP status' },
-  { id: 'shield', name: 'Rob Shield', price: 2000, desc: 'Protect from rob for 24h' },
-  { id: 'car', name: 'Car', price: 50000, desc: 'Flex car' },
-  { id: 'house', name: 'House', price: 100000, desc: 'Flex house' },
-  { id: 'phone', name: 'iPhone 17', price: 20000, desc: 'Flex phone' }
+const SHOP = [
+  { id:'phone', name:'📱 Phone', price:5000 },
+  { id:'car', name:'🚗 Car', price:50000 },
+  { id:'house', name:'🏠 House', price:200000 },
+  { id:'laptop', name:'💻 Laptop', price:15000 },
+  { id:'sword', name:'⚔️ Sword', price:8000 },
+  { id:'fishing', name:'🎣 Fishing Rod', price:3000 },
+  { id:'pickaxe', name:'⛏️ Pickaxe', price:4000 },
+  { id:'gun', name:'🔫 Gun', price:12000 },
 ];
-const workJobs = [
-  "You worked as a Bolt driver and earned",
-  "You worked as a waiter and earned",
-  "You fixed phones and earned",
-  "You sold data and earned",
-  "You worked as a barber and earned",
-  "You did POS business and earned"
-];
+
+const COMMANDS = ['balance','daily','weekly','monthly','work','crime','rob','deposit','withdraw','transfer','pay','shop','buy','sell','inventory','leaderboard','coin','bank','gamble','beg','fish','hunt','mine','dailybonus','profile'];
 
 module.exports = {
-  name: "economy",
-  loadEcon, saveEcon, getUser, addCoins, removeCoins, shopItems,
+  name: 'economy',
+  commands: COMMANDS,
+  run: async (sock, m, jid, cmd, args, text, isOwner, isGroup, sender) => {
+    if(!COMMANDS.includes(cmd)) return false;
+    const user = getUser(sender);
+    const targetId = getTarget(m, args);
+    const amount = parseInt(args.find(a=>/^\d+$/.test(a)) || args[1] || '0');
 
-  async run(sock, m, jid, cmd, args, text, isOwner, isGroup, sender){
-
-    const econCmds = ['balance','bal','daily','work','rob','transfer','pay','leaderboard','lb','shop','buy','deposit','dep','withdraw','wd','rich'];
-    if(!econCmds.includes(cmd)) return false;
-
-    const getTarget = () => {
-      const ctx = m.message?.extendedTextMessage?.contextInfo;
-      if(ctx?.mentionedJid?.length) return ctx.mentionedJid[0];
-      if(ctx?.participant) return ctx.participant;
-      if(args[0]) return args[0].replace(/[^0-9]/g,'') + '@s.whatsapp.net';
-      return sender;
-    };
-
-    // ================= BALANCE =================
-    if(cmd === 'balance' || cmd === 'bal'){
-      await sendAwait(sock, jid, m);
-      const { user } = getUser(sender);
-      await sock.sendMessage(jid, { text: `▫️ 💀 Balance For @${sender.split('@')[0]}\n\nWallet: ${user.wallet} Coins\nBank: ${user.bank} Coins\nTotal: ${user.wallet + user.bank} Coins\nItems: ${user.items.length ? user.items.join(', ') : 'None'}`, mentions: [sender] }, { quoted: m });
+    // --- BALANCE / PROFILE / BANK ---
+    if(cmd === 'balance' || cmd === 'bank'){
+      const u = targetId ? getUser(targetId) : user;
+      const name = targetId ? targetId.split('@')[0] : 'You';
+      await sock.sendMessage(jid, { text: `💰 *BALANCE - @${name}*\n\n👛 Wallet: $${fmt(u.wallet)}\n🏦 Bank: $${fmt(u.bank)}\n💎 Total: $${fmt(u.wallet+u.bank)}\n⭐ Level: ${u.level} | XP: ${u.xp}`, mentions: targetId?[targetId]:[] }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'profile'){
+      const u = targetId ? getUser(targetId) : user;
+      const name = targetId ? targetId.split('@')[0] : 'You';
+      await sock.sendMessage(jid, { text: `👤 *PROFILE - @${name}*\n\n💰 Wallet: $${fmt(u.wallet)}\n🏦 Bank: $${fmt(u.bank)}\n⭐ Level: ${u.level}\n✨ XP: ${u.xp}\n🎒 Items: ${u.inventory.length ? u.inventory.map(i=>i.name).join(', ') : 'None'}\n📦 Inventory: ${u.inventory.length} items`, mentions: targetId?[targetId]:[] }, { quoted: m });
       return true;
     }
 
-    // ================= DAILY - REAL 24H COOLDOWN =================
-    if(cmd === 'daily'){
-      await sendAwait(sock, jid, m);
-      const { db, user } = getUser(sender);
-      const now = Date.now();
-      const cooldown = 24 * 60 * 60 * 1000;
-      if(now - user.lastDaily < cooldown){
-        const left = cooldown - (now - user.lastDaily);
-        const h = Math.floor(left / 3600000);
-        const min = Math.floor((left % 3600000) / 60000);
-        await facelessReply(sock, jid, `You Already Claimed Daily, Come Back In ${h}h ${min}m`, m);
-        return true;
-      }
-      const amount = 500;
-      user.wallet += amount;
-      user.lastDaily = now;
-      db[sender] = user;
-      saveEcon(db);
-      await facelessReply(sock, jid, `Daily Reward: +${amount} Coins\nWallet: ${user.wallet}`, m);
+    // --- DAILY / WEEKLY / MONTHLY / DAILYBONUS ---
+    if(['daily','weekly','monthly','dailybonus'].includes(cmd)){
+      const map = { daily:['lastDaily', 24*3600*1000, 500], weekly:['lastWeekly', 7*24*3600*1000, 3000], monthly:['lastMonthly', 30*24*3600*1000, 10000], dailybonus:['lastBonus', 24*3600*1000, 1000] };
+      const [key, ms, reward] = map[cmd];
+      const left = cooldown(user[key], ms);
+      if(left>0){ await sock.sendMessage(jid, { text: `⏳ You already claimed ${cmd}!\nCome back in ${timeLeft(left)}` }, { quoted: m }); return true; }
+      const gain = rand(reward, reward*2);
+      user[key]=Date.now(); user.wallet+=gain; user.xp+=20;
+      setUser(sender, user);
+      await sock.sendMessage(jid, { text: `🎁 *${cmd.toUpperCase()} CLAIMED!*\n\n+$${fmt(gain)}\n👛 Wallet: $${fmt(user.wallet)}` }, { quoted: m });
       return true;
     }
 
-    // ================= WORK - REAL 5 MIN COOLDOWN =================
+    // --- WORK ---
     if(cmd === 'work'){
-      await sendAwait(sock, jid, m);
-      const { db, user } = getUser(sender);
-      const now = Date.now();
-      if(now - user.lastWork < 5 * 60 * 1000){
-        const left = Math.ceil((5*60*1000 - (now - user.lastWork))/1000);
-        await facelessReply(sock, jid, `Wait ${left}s Before Working Again`, m);
-        return true;
-      }
-      const earn = Math.floor(Math.random()*300)+100;
-      const job = workJobs[Math.floor(Math.random()*workJobs.length)];
-      user.wallet += earn;
-      user.lastWork = now;
-      db[sender] = user;
-      saveEcon(db);
-      await facelessReply(sock, jid, `${job} ${earn} Coins\nWallet: ${user.wallet}`, m);
+      const left = cooldown(user.lastWork, 5*60*1000);
+      if(left>0){ await sock.sendMessage(jid, { text: `⏳ You are tired! Rest for ${timeLeft(left)}` }, { quoted: m }); return true; }
+      const jobs = ['Builder','Driver','Teacher','Hacker','Farmer','Trader','Chef','Cleaner'];
+      const job = jobs[Math.floor(Math.random()*jobs.length)];
+      const gain = rand(100,500);
+      user.lastWork=Date.now(); user.wallet+=gain; user.xp+=10;
+      setUser(sender, user);
+      await sock.sendMessage(jid, { text: `💼 *WORK*\nJob: ${job}\nYou earned $${fmt(gain)}\n👛 Wallet: $${fmt(user.wallet)}` }, { quoted: m });
       return true;
     }
 
-    // ================= ROB - REAL =================
-    if(cmd === 'rob'){
-      await sendAwait(sock, jid, m);
-      const target = getTarget();
-      if(target === sender){
-        await facelessReply(sock, jid, "You Cannot Rob Yourself", m);
-        return true;
-      }
-      const { db: db1, user: me } = getUser(sender);
-      const { db: db2, user: victim } = getUser(target);
-      if(victim.wallet < 100){
-        await facelessReply(sock, jid, "That User Is Too Poor To Rob (Less Than 100)", m);
-        return true;
-      }
-      const success = Math.random() < 0.5;
-      if(success){
-        const stolen = Math.floor(victim.wallet * 0.3);
-        victim.wallet -= stolen;
-        me.wallet += stolen;
-        db1[sender] = me; saveEcon(db1);
-        db2[target] = victim; saveEcon(db2);
-        await sock.sendMessage(jid, { text: `▫️ 💀 You Robbed @${target.split('@')[0]} And Got ${stolen} Coins!`, mentions: [target] }, { quoted: m });
+    // --- CRIME ---
+    if(cmd === 'crime'){
+      const left = cooldown(user.lastCrime, 10*60*1000);
+      if(left>0){ await sock.sendMessage(jid, { text: `⏳ Police is watching! Wait ${timeLeft(left)}` }, { quoted: m }); return true; }
+      user.lastCrime=Date.now();
+      if(Math.random()<0.6){
+        const gain = rand(200,800);
+        user.wallet+=gain; user.xp+=15; setUser(sender,user);
+        await sock.sendMessage(jid, { text: `😈 *CRIME SUCCESS!*\nYou stole $${fmt(gain)}\n👛 Wallet: $${fmt(user.wallet)}` }, { quoted: m });
       } else {
-        const fine = Math.min(100, me.wallet);
-        me.wallet -= fine;
-        db1[sender] = me; saveEcon(db1);
-        await facelessReply(sock, jid, `Rob Failed! You Were Caught And Fined ${fine} Coins`, m);
+        const loss = rand(100,300);
+        user.wallet=Math.max(0,user.wallet-loss); setUser(sender,user);
+        await sock.sendMessage(jid, { text: `🚔 *CAUGHT!*\nYou paid $${fmt(loss)} fine\n👛 Wallet: $${fmt(user.wallet)}` }, { quoted: m });
       }
       return true;
     }
 
-    // ================= TRANSFER / PAY - REAL =================
+    // --- ROB ---
+    if(cmd === 'rob'){
+      if(!targetId){ await sock.sendMessage(jid, { text: 'Usage: .rob @user' }, { quoted: m }); return true; }
+      if(targetId===sender){ await sock.sendMessage(jid, { text: 'You cannot rob yourself' }, { quoted: m }); return true; }
+      const victim = getUser(targetId);
+      if(victim.wallet < 100){ await sock.sendMessage(jid, { text: 'Victim is broke!' }, { quoted: m }); return true; }
+      if(Math.random()<0.5){
+        const steal = rand(50, Math.min(300, victim.wallet));
+        victim.wallet-=steal; user.wallet+=steal; setUser(targetId,victim); setUser(sender,user);
+        await sock.sendMessage(jid, { text: `😈 You robbed @${targetId.split('@')[0]} $${fmt(steal)}!`, mentions:[targetId] }, { quoted: m });
+      } else {
+        const fine = rand(50,150);
+        user.wallet=Math.max(0,user.wallet-fine); setUser(sender,user);
+        await sock.sendMessage(jid, { text: `🚔 You got caught robbing! Paid $${fmt(fine)} fine` }, { quoted: m });
+      }
+      return true;
+    }
+
+    // --- DEPOSIT / WITHDRAW ---
+    if(cmd === 'deposit' || cmd === 'withdraw'){
+      const amt = args[0]==='all' ? (cmd==='deposit'?user.wallet:user.bank) : parseInt(args[0]||'0');
+      if(!amt || amt<=0){ await sock.sendMessage(jid, { text: `Usage: .${cmd} <amount> / .${cmd} all` }, { quoted: m }); return true; }
+      if(cmd==='deposit'){
+        if(user.wallet<amt){ await sock.sendMessage(jid, { text: 'Not enough in wallet' }, { quoted: m }); return true; }
+        user.wallet-=amt; user.bank+=amt; setUser(sender,user);
+        await sock.sendMessage(jid, { text: `🏦 Deposited $${fmt(amt)}\nBank: $${fmt(user.bank)} | Wallet: $${fmt(user.wallet)}` }, { quoted: m });
+      } else {
+        if(user.bank<amt){ await sock.sendMessage(jid, { text: 'Not enough in bank' }, { quoted: m }); return true; }
+        user.bank-=amt; user.wallet+=amt; setUser(sender,user);
+        await sock.sendMessage(jid, { text: `💵 Withdrew $${fmt(amt)}\nWallet: $${fmt(user.wallet)} | Bank: $${fmt(user.bank)}` }, { quoted: m });
+      }
+      return true;
+    }
+
+    // --- TRANSFER / PAY ---
     if(cmd === 'transfer' || cmd === 'pay'){
-      await sendAwait(sock, jid, m);
-      const target = getTarget();
-      const amount = parseInt(args[1] || args[0]);
-      if(!target || target === sender || !amount || isNaN(amount) || amount <= 0){
-        await facelessReply(sock, jid, "Usage: .transfer @user <amount>", m);
-        return true;
-      }
-      const { db, user } = getUser(sender);
-      if(user.wallet < amount){
-        await facelessReply(sock, jid, `Insufficient Funds, Wallet: ${user.wallet}`, m);
-        return true;
-      }
-      const { db: db2, user: receiver } = getUser(target);
-      user.wallet -= amount;
-      receiver.wallet += amount;
-      db[sender] = user; saveEcon(db);
-      db2[target] = receiver; saveEcon(db2);
-      await sock.sendMessage(jid, { text: `▫️ 💀 Transfer Success\n@${sender.split('@')[0]} -> @${target.split('@')[0]}\nAmount: ${amount} Coins`, mentions: [sender, target] }, { quoted: m });
+      if(!targetId || !amount){ await sock.sendMessage(jid, { text: 'Usage: .pay @user 500' }, { quoted: m }); return true; }
+      if(user.wallet<amount){ await sock.sendMessage(jid, { text: 'Not enough money' }, { quoted: m }); return true; }
+      const recv = getUser(targetId);
+      user.wallet-=amount; recv.wallet+=amount; setUser(sender,user); setUser(targetId,recv);
+      await sock.sendMessage(jid, { text: `💸 Sent $${fmt(amount)} to @${targetId.split('@')[0]}\nYour wallet: $${fmt(user.wallet)}`, mentions:[targetId] }, { quoted: m });
       return true;
     }
 
-    // ================= LEADERBOARD - REAL SORT =================
-    if(cmd === 'leaderboard' || cmd === 'lb' || cmd === 'rich'){
-      await sendAwait(sock, jid, m);
-      const db = loadEcon();
-      const sorted = Object.entries(db).sort((a,b) => (b[1].wallet + b[1].bank) - (a[1].wallet + a[1].bank)).slice(0,10);
-      if(!sorted.length){
-        await facelessReply(sock, jid, "No One Has Coins Yet, Do .daily", m);
-        return true;
-      }
-      let txt = `Top 10 Richest:\n\n`;
-      sorted.forEach(([id, u], i) => {
-        txt += `${i+1}. @${id.split('@')[0]} - ${u.wallet + u.bank} Coins\n`;
-      });
-      const mentions = sorted.map(([id]) => id);
-      await sock.sendMessage(jid, { text: `▫️ 💀 ${txt}`, mentions }, { quoted: m });
-      return true;
-    }
-
-    // ================= SHOP =================
+    // --- SHOP / BUY / SELL / INVENTORY ---
     if(cmd === 'shop'){
-      await sendAwait(sock, jid, m);
-      let txt = `Shop:\n\n`;
-      shopItems.forEach(i => txt += `${i.id} - ${i.name} - ${i.price} Coins\n${i.desc}\n\n`);
-      txt += `Buy With: .buy <id>`;
-      await facelessReply(sock, jid, txt, m);
+      await sock.sendMessage(jid, { text: `🛒 *SHOP*\n\n${SHOP.map((s,i)=>`${i+1}. ${s.name} - $${fmt(s.price)}\n   Buy: .buy ${s.id}`).join('\n\n')}\n\nYour wallet: $${fmt(user.wallet)}` }, { quoted: m });
       return true;
     }
-
-    // ================= BUY - REAL =================
     if(cmd === 'buy'){
-      await sendAwait(sock, jid, m);
-      const itemId = (args[0]||"").toLowerCase();
-      const item = shopItems.find(i => i.id === itemId);
-      if(!item){
-        await facelessReply(sock, jid, "Item Not Found, Use .shop To See Items", m);
-        return true;
-      }
-      const { db, user } = getUser(sender);
-      if(user.wallet < item.price){
-        await facelessReply(sock, jid, `You Need ${item.price} Coins, You Have ${user.wallet}`, m);
-        return true;
-      }
-      user.wallet -= item.price;
-      user.items.push(item.name);
-      db[sender] = user;
-      saveEcon(db);
-      await facelessReply(sock, jid, `You Bought ${item.name} For ${item.price} Coins\nWallet Left: ${user.wallet}`, m);
+      const id = (args[0]||'').toLowerCase();
+      const item = SHOP.find(s=>s.id===id);
+      if(!item){ await sock.sendMessage(jid, { text: 'Usage: .buy phone / car / house etc\nSee .shop' }, { quoted: m }); return true; }
+      if(user.wallet<item.price){ await sock.sendMessage(jid, { text: `Not enough! Need $${fmt(item.price)}` }, { quoted: m }); return true; }
+      user.wallet-=item.price; user.inventory.push(item); setUser(sender,user);
+      await sock.sendMessage(jid, { text: `✅ Bought ${item.name} for $${fmt(item.price)}\nWallet: $${fmt(user.wallet)}` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'sell'){
+      const id = (args[0]||'').toLowerCase();
+      const idx = user.inventory.findIndex(i=>i.id===id);
+      if(idx<0){ await sock.sendMessage(jid, { text: 'You do not own that item\nSee .inventory' }, { quoted: m }); return true; }
+      const item = user.inventory[idx];
+      const sellPrice = Math.floor(item.price*0.7);
+      user.inventory.splice(idx,1); user.wallet+=sellPrice; setUser(sender,user);
+      await sock.sendMessage(jid, { text: `💰 Sold ${item.name} for $${fmt(sellPrice)}\nWallet: $${fmt(user.wallet)}` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'inventory'){
+      if(!user.inventory.length){ await sock.sendMessage(jid, { text: '🎒 Inventory empty\nUse .shop to buy' }, { quoted: m }); return true; }
+      await sock.sendMessage(jid, { text: `🎒 *INVENTORY*\n\n${user.inventory.map((i,idx)=>`${idx+1}. ${i.name} - $${fmt(i.price)}`).join('\n')}\n\nTotal value: $${fmt(user.inventory.reduce((a,i)=>a+i.price,0))}` }, { quoted: m });
       return true;
     }
 
-    // ================= DEPOSIT =================
-    if(cmd === 'deposit' || cmd === 'dep'){
-      await sendAwait(sock, jid, m);
-      let amount = args[0] === 'all' ? null : parseInt(args[0]);
-      const { db, user } = getUser(sender);
-      if(args[0] === 'all') amount = user.wallet;
-      if(!amount || isNaN(amount) || amount <= 0){
-        await facelessReply(sock, jid, "Usage: .deposit <amount> / .deposit all", m);
-        return true;
-      }
-      if(user.wallet < amount){
-        await facelessReply(sock, jid, `Insufficient Wallet: ${user.wallet}`, m);
-        return true;
-      }
-      user.wallet -= amount;
-      user.bank += amount;
-      db[sender] = user;
-      saveEcon(db);
-      await facelessReply(sock, jid, `Deposited ${amount} Coins\nWallet: ${user.wallet}\nBank: ${user.bank}`, m);
+    // --- LEADERBOARD ---
+    if(cmd === 'leaderboard'){
+      const db = load();
+      const top = Object.entries(db).sort((a,b)=>(b[1].wallet+b[1].bank)-(a[1].wallet+a[1].bank)).slice(0,10);
+      await sock.sendMessage(jid, { text: `🏆 *LEADERBOARD*\n\n${top.map(([id,u],i)=>`${i+1}. @${id.split('@')[0]} - $${fmt(u.wallet+u.bank)}`).join('\n')||'No users yet'}`, mentions: top.map(([id])=>id) }, { quoted: m });
       return true;
     }
 
-    // ================= WITHDRAW =================
-    if(cmd === 'withdraw' || cmd === 'wd'){
-      await sendAwait(sock, jid, m);
-      let amount = args[0] === 'all' ? null : parseInt(args[0]);
-      const { db, user } = getUser(sender);
-      if(args[0] === 'all') amount = user.bank;
-      if(!amount || isNaN(amount) || amount <= 0){
-        await facelessReply(sock, jid, "Usage: .withdraw <amount> / .withdraw all", m);
-        return true;
+    // --- COIN / GAMBLE ---
+    if(cmd === 'coin'){
+      const bet = parseInt(args[1]||args[0]||'0');
+      const choice = (args[0]||'').toLowerCase();
+      if(['heads','tails'].includes(choice) && bet){
+        if(user.wallet<bet){ await sock.sendMessage(jid, { text: 'Not enough' }, { quoted: m }); return true; }
+        const res = Math.random()<0.5?'heads':'tails';
+        if(res===choice){ user.wallet+=bet; await sock.sendMessage(jid, { text: `🪙 ${res}! You won $${fmt(bet)}` }, { quoted: m }); }
+        else { user.wallet-=bet; await sock.sendMessage(jid, { text: `🪙 ${res}! You lost $${fmt(bet)}` }, { quoted: m }); }
+        setUser(sender,user); return true;
       }
-      if(user.bank < amount){
-        await facelessReply(sock, jid, `Insufficient Bank: ${user.bank}`, m);
-        return true;
-      }
-      user.bank -= amount;
-      user.wallet += amount;
-      db[sender] = user;
-      saveEcon(db);
-      await facelessReply(sock, jid, `Withdrew ${amount} Coins\nWallet: ${user.wallet}\nBank: ${user.bank}`, m);
+      await sock.sendMessage(jid, { text: 'Usage: .coin heads 100 / .coin tails 100' }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'gamble'){
+      const bet = parseInt(args[0]||'0');
+      if(!bet || user.wallet<bet){ await sock.sendMessage(jid, { text: 'Usage: .gamble 100' }, { quoted: m }); return true; }
+      if(Math.random()<0.45){ const win = bet*2; user.wallet+=win; await sock.sendMessage(jid, { text: `🎰 You won $${fmt(win)}!` }, { quoted: m }); }
+      else { user.wallet-=bet; await sock.sendMessage(jid, { text: `🎰 You lost $${fmt(bet)}!` }, { quoted: m }); }
+      setUser(sender,user); return true;
+    }
+
+    // --- BEG / FISH / HUNT / MINE ---
+    if(['beg','fish','hunt','mine'].includes(cmd)){
+      const map = { beg:['lastBeg', 2*60*1000, 10, 100, 'Someone gave you'], fish:['lastFish', 5*60*1000, 50, 300, 'You caught fish'], hunt:['lastHunt', 5*60*1000, 50, 300, 'You hunted'], mine:['lastMine', 5*60*1000, 50, 400, 'You mined'] };
+      const [key, ms, min, max, label] = map[cmd];
+      const left = cooldown(user[key], ms);
+      if(left>0){ await sock.sendMessage(jid, { text: `⏳ Wait ${timeLeft(left)} for .${cmd}` }, { quoted: m }); return true; }
+      if(cmd==='fish' && !user.inventory.some(i=>i.id==='fishing')){ await sock.sendMessage(jid, { text: 'You need Fishing Rod! Buy with .buy fishing' }, { quoted: m }); return true; }
+      if(cmd==='mine' && !user.inventory.some(i=>i.id==='pickaxe')){ await sock.sendMessage(jid, { text: 'You need Pickaxe! Buy with .buy pickaxe' }, { quoted: m }); return true; }
+      const gain = rand(min,max);
+      user[key]=Date.now(); user.wallet+=gain; user.xp+=5; setUser(sender,user);
+      await sock.sendMessage(jid, { text: `${cmd==='beg'?'🙏':cmd==='fish'?'🎣':cmd==='hunt'?'🏹':'⛏️'} ${label} $${fmt(gain)}\nWallet: $${fmt(user.wallet)}` }, { quoted: m });
       return true;
     }
 
