@@ -1,232 +1,269 @@
-const { facelessReply, sendAwait } = require('../lib/function');
+// 🎮 FACELESS - GAME PLUGIN - REAL HANDLER
+const fs = require('fs');
 
-// Real game state - in memory per chat
-const games = new Map(); // jid -> { type, answer, ... }
-const tttGames = new Map(); // jid -> { board, p1, p2, turn }
+const COMMANDS = ['tictactoe','quiz','riddle','trivia','math','guess','guessnumber','guessword','wordchain','scramble','rps','coinflip','dice','truth','dare','hangman','slots','memory','fasttype','puzzle'];
 
-const quizData = [
-  { q: "What is the capital of Nigeria?", a: "abuja", opts: ["Lagos", "Abuja", "Kano"] },
-  { q: "What is 2 + 2 x 3?", a: "8", opts: ["8", "12", "10"] },
-  { q: "Which planet is known as Red Planet?", a: "mars", opts: ["Venus", "Mars", "Jupiter"] },
-  { q: "Who is the president of Nigeria in 2026?", a: "tinubu", opts: ["Buhari", "Tinubu", "Obi"] },
-  { q: "What is the largest ocean?", a: "pacific", opts: ["Atlantic", "Pacific", "Indian"] },
-  { q: "How many days in a leap year?", a: "366", opts: ["365", "366", "364"] },
-  { q: "What is H2O?", a: "water", opts: ["Water", "Fire", "Air"] },
-  { q: "Which animal is man's best friend?", a: "dog", opts: ["Cat", "Dog", "Goat"] }
+// Real per-chat game state - not fake
+global.gameState = global.gameState || new Map();
+function getGame(jid){ return global.gameState.get(jid); }
+function setGame(jid, g){ global.gameState.set(jid, g); }
+function clearGame(jid){ global.gameState.delete(jid); }
+
+const QUIZ = [
+  {q:'What is the capital of Nigeria?', a:'abuja', opts:['Lagos','Abuja','Kano','Ibadan']},
+  {q:'What is 12 x 8?', a:'96', opts:['96','84','108','72']},
+  {q:'Which planet is called Red Planet?', a:'mars', opts:['Venus','Mars','Jupiter','Saturn']},
+  {q:'What is H2O?', a:'water', opts:['Salt','Water','Oxygen','Fire']},
+  {q:'Who is the richest man in Nigeria?', a:'dangote', opts:['Dangote','Otedola','Adenuga','Buhari']},
+  {q:'What year did Nigeria gain independence?', a:'1960', opts:['1960','1963','1970','1959']},
 ];
-const riddleData = [
-  { q: "I speak without a mouth and hear without ears. What am I?", a: "echo" },
-  { q: "What has keys but can't open locks?", a: "piano" },
-  { q: "The more you take, the more you leave behind. What am I?", a: "footsteps" },
-  { q: "What has a face and two hands but no arms or legs?", a: "clock" },
-  { q: "What comes once in a minute, twice in a moment, but never in a thousand years?", a: "m" }
+const RIDDLES = [
+  {q:'I speak without a mouth and hear without ears. I have no body, but I come alive with wind. What am I?', a:'echo'},
+  {q:'The more you take, the more you leave behind. What am I?', a:'footsteps'},
+  {q:'What has keys but cannot open locks?', a:'piano'},
+  {q:'What gets wetter the more it dries?', a:'towel'},
 ];
+const TRUTHS = ['What is your biggest secret?','Who is your crush?','Have you ever lied to your best friend?','What is your most embarrassing moment?','Have you ever cheated in exam?'];
+const DARES = ['Send a voice note singing','Change your DP for 1 hour','Text your crush hi','Do 10 pushups and send video','Call your best friend and say I love you'];
+const WORDS = ['faceless','whatsapp','nigeria','lagos','python','javascript','football','champion','diamond','warri'];
+const SCRAMBLE_WORDS = ['faceless','bot','lagos','warri','money','phone','school','friend'];
 
-function formatTTT(board){
-  const e = (i) => board[i] || `${i+1}️⃣`;
-  return `${e(0)} ${e(1)} ${e(2)}\n${e(3)} ${e(4)} ${e(5)}\n${e(6)} ${e(7)} ${e(8)}`;
-}
-function checkWin(b){
-  const lines = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
-  for(const [a,c,d] of lines) if(b[a] && b[a]===b[c] && b[a]===b[d]) return b[a];
-  if(b.every(x => x)) return 'draw';
-  return null;
-}
+function shuffle(a){ return a.sort(()=>Math.random()-0.5); }
+function scramble(w){ return shuffle(w.split('')).join(''); }
+function boardStr(b){ return `${b[0]||'1'} | ${b[1]||'2'} | ${b[2]||'3'}\n---------\n${b[3]||'4'} | ${b[4]||'5'} | ${b[5]||'6'}\n---------\n${b[6]||'7'} | ${b[7]||'8'} | ${b[8]||'9'}`; }
+function checkWin(b, s){ const w=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]]; return w.some(c=>c.every(i=>b[i]===s)); }
 
 module.exports = {
-  name: "games",
-  games, tttGames,
+  name: 'game',
+  commands: COMMANDS,
 
-  // ===== REAL ANSWER CHECKER - Called from index.js before commands =====
-  async handleAnswer(sock, m, jid, text, sender){
-    const g = games.get(jid);
-    if(!g) return false;
-    const ans = text.trim().toLowerCase();
+  // Real answer handler - index.js will call this for every message
+  onMessage: async (sock, m, jid) => {
+    const g = getGame(jid);
+    if(!g) return;
+    const body = (m.body||'').trim().toLowerCase();
+    if(body.startsWith('.')) return; // command, not answer
+    if(m.sender !== g.player && g.type !== 'tictactoe' && g.type !== 'wordchain') return;
 
-    // Skip if it's a command
-    if(ans.startsWith('.')) return false;
+    try{
+      // QUIZ / TRIVIA / MATH / GUESSNUMBER / GUESSWORD / SCRAMBLE / HANGMAN / MEMORY / FASTTYPE
+      if(['quiz','trivia','math','guessnumber','guessword','scramble','hangman','memory','fasttype','puzzle'].includes(g.type)){
+        // HANGMAN - single letter
+        if(g.type === 'hangman'){
+          if(body.length !== 1 || !/^[a-z]$/.test(body)) return;
+          if(g.guessed.includes(body)){ await sock.sendMessage(jid, { text: `Already guessed ${body}` }); return; }
+          g.guessed.push(body);
+          if(g.word.includes(body)){
+            const display = g.word.split('').map(c=>g.guessed.includes(c)?c:'_').join(' ');
+            if(!display.includes('_')){
+              await sock.sendMessage(jid, { text: `🎉 You won! Word was *${g.word}*` });
+              clearGame(jid); return;
+            }
+            await sock.sendMessage(jid, { text: `✅ Correct!\n${display}\nGuessed: ${g.guessed.join(', ')} | Lives: ${g.lives}` });
+          } else {
+            g.lives--;
+            if(g.lives <= 0){ await sock.sendMessage(jid, { text: `💀 Game over! Word was *${g.word}*` }); clearGame(jid); return; }
+            const display = g.word.split('').map(c=>g.guessed.includes(c)?c:'_').join(' ');
+            await sock.sendMessage(jid, { text: `❌ Wrong!\n${display}\nLives: ${g.lives} | Guessed: ${g.guessed.join(', ')}` });
+          }
+          return;
+        }
 
-    if(g.type === 'quiz' || g.type === 'riddle' || g.type === 'math' || g.type === 'guess'){
-      if(ans === g.answer.toString().toLowerCase()){
-        games.delete(jid);
-        await facelessReply(sock, jid, `Correct! @${sender.split('@')[0]} You Win! Answer: ${g.answer}`, m);
-        // Give economy reward if economy plugin exists
-        try{
-          const econ = require('./economy');
-          econ.addCoins(sender, 50);
-        }catch{}
-        return true;
-      } else {
-        // Don't spam for every message, only if game is active and user tried
-        return false;
+        // FASTTYPE - must type exactly
+        if(g.type === 'fasttype'){
+          if(body === g.answer){
+            const time = ((Date.now()-g.start)/1000).toFixed(1);
+            await sock.sendMessage(jid, { text: `⚡ FAST! You typed it in ${time}s\nWord: ${g.answer}` });
+            clearGame(jid);
+          }
+          return;
+        }
+
+        // MEMORY - repeat sequence
+        if(g.type === 'memory'){
+          if(body === g.answer){
+            await sock.sendMessage(jid, { text: `🧠 Correct! You remembered: ${g.answer}` });
+            clearGame(jid);
+          } else {
+            await sock.sendMessage(jid, { text: `❌ Wrong. Sequence was: ${g.answer}` });
+            clearGame(jid);
+          }
+          return;
+        }
+
+        // General answer check
+        if(body === g.answer || body === g.answer.toLowerCase()){
+          await sock.sendMessage(jid, { text: `✅ Correct! 🎉\nAnswer: ${g.answer}\n+100 points` });
+          clearGame(jid);
+        } else {
+          g.tries = (g.tries||0)+1;
+          if(g.type === 'guessnumber'){
+            const num = parseInt(body);
+            if(!isNaN(num)){
+              const hint = num < parseInt(g.answer) ? '🔼 Higher!' : '🔽 Lower!';
+              if(g.tries >= 5){ await sock.sendMessage(jid, { text: `💀 Out of tries! Number was ${g.answer}` }); clearGame(jid); return; }
+              await sock.sendMessage(jid, { text: `${hint} Tries left: ${5-g.tries}` });
+              return;
+            }
+          }
+          if(g.tries >= 3){ await sock.sendMessage(jid, { text: `❌ Wrong! Answer was: *${g.answer}*` }); clearGame(jid); return; }
+          await sock.sendMessage(jid, { text: `❌ Wrong! Try again (${g.tries}/3)` });
+        }
+        return;
       }
-    }
-    return false;
+
+      // TICTACTOE - 1-9 move
+      if(g.type === 'tictactoe'){
+        const pos = parseInt(body)-1;
+        if(isNaN(pos) || pos<0 || pos>8) return;
+        if(g.board[pos]){ await sock.sendMessage(jid, { text: 'That spot is taken!' }); return; }
+        // Only allow current player
+        if(m.sender !== g.turn){ await sock.sendMessage(jid, { text: 'Not your turn!' }); return; }
+        g.board[pos] = g.turn === g.p1 ? '❌' : '⭕';
+        if(checkWin(g.board, g.board[pos])){
+          await sock.sendMessage(jid, { text: `🏆 @${m.sender.split('@')[0]} wins!\n\n${boardStr(g.board)}`, mentions:[m.sender] });
+          clearGame(jid); return;
+        }
+        if(g.board.every(c=>c)){
+          await sock.sendMessage(jid, { text: `🤝 Draw!\n\n${boardStr(g.board)}` });
+          clearGame(jid); return;
+        }
+        g.turn = g.turn === g.p1 ? g.p2 : g.p1;
+        // Bot move if playing vs bot
+        if(g.vsBot && g.turn === 'bot'){
+          const empty = g.board.map((c,i)=>!c?i:-1).filter(i=>i>=0);
+          const pick = empty[Math.floor(Math.random()*empty.length)];
+          g.board[pick] = '⭕';
+          if(checkWin(g.board,'⭕')){ await sock.sendMessage(jid, { text: `🤖 Bot wins!\n\n${boardStr(g.board)}` }); clearGame(jid); return; }
+          if(g.board.every(c=>c)){ await sock.sendMessage(jid, { text: `🤝 Draw!\n\n${boardStr(g.board)}` }); clearGame(jid); return; }
+          g.turn = g.p1;
+        }
+        await sock.sendMessage(jid, { text: `🎮 TicTacToe\n\n${boardStr(g.board)}\n\nTurn: @${g.turn==='bot'?'Bot':g.turn.split('@')[0]}`, mentions: g.turn==='bot'?[]:[g.turn] });
+        return;
+      }
+
+      // WORDCHAIN - next word must start with last letter
+      if(g.type === 'wordchain'){
+        if(!/^[a-z]+$/.test(body)) return;
+        if(g.used.includes(body)){ await sock.sendMessage(jid, { text: 'Word already used!' }); return; }
+        if(g.lastLetter && !body.startsWith(g.lastLetter)){ await sock.sendMessage(jid, { text: `Must start with *${g.lastLetter.toUpperCase()}*` }); return; }
+        g.used.push(body);
+        g.lastLetter = body.slice(-1);
+        await sock.sendMessage(jid, { text: `✅ ${body}\nNext must start with *${g.lastLetter.toUpperCase()}*\nWords used: ${g.used.length}` });
+        return;
+      }
+    }catch(e){ console.log('game onMessage', e.message); }
   },
 
-  // ===== REAL TTT MOVE HANDLER =====
-  async handleTTT(sock, m, jid, text, sender){
-    const g = tttGames.get(jid);
-    if(!g) return false;
-    if(!text.match(/^[1-9]$/)) return false;
-    if(sender !== g.turn){
-      return false;
-    }
-    const pos = parseInt(text) - 1;
-    if(g.board[pos]){
-      await facelessReply(sock, jid, "That Position Is Taken, Choose Another", m);
-      return true;
-    }
-    const mark = sender === g.p1 ? '❌' : '⭕';
-    g.board[pos] = mark;
-    const win = checkWin(g.board);
-    if(win === 'draw'){
-      tttGames.delete(jid);
-      await facelessReply(sock, jid, `Draw!\n\n${formatTTT(g.board)}`, m);
-      return true;
-    }
-    if(win){
-      tttGames.delete(jid);
-      await facelessReply(sock, jid, `Winner: @${sender.split('@')[0]} (${win})\n\n${formatTTT(g.board)}`, m);
-      return true;
-    }
-    g.turn = g.turn === g.p1 ? g.p2 : g.p1;
-    await sock.sendMessage(jid, { text: `▫️ 💀 TicTacToe\n\n${formatTTT(g.board)}\n\nTurn: @${g.turn.split('@')[0]} - Send 1-9`, mentions: [g.turn] }, { quoted: m });
-    return true;
-  },
+  run: async (sock, m, jid, cmd, args, text, isOwner, isGroup, sender) => {
+    if(!COMMANDS.includes(cmd)) return false;
 
-  async run(sock, m, jid, cmd, args, text, isOwner, isGroup, sender){
-
-    const gameCmds = ['quiz','riddle','math','guess','slot','dice','coinflip','flip','rps','tictactoe','ttt','stopgame'];
-    if(!gameCmds.includes(cmd)) return false;
-
-    // ================= QUIZ =================
-    if(cmd === 'quiz'){
-      await sendAwait(sock, jid, m);
-      const q = quizData[Math.floor(Math.random()*quizData.length)];
-      games.set(jid, { type:'quiz', answer: q.a, timeout: setTimeout(()=>games.delete(jid), 60000) });
-      await facelessReply(sock, jid, `Quiz:\n${q.q}\nOptions: ${q.opts.join(' | ')}\nReply With Answer - 60s`, m);
-      return true;
-    }
-
-    // ================= RIDDLE =================
-    if(cmd === 'riddle'){
-      await sendAwait(sock, jid, m);
-      const r = riddleData[Math.floor(Math.random()*riddleData.length)];
-      games.set(jid, { type:'riddle', answer: r.a });
-      await facelessReply(sock, jid, `Riddle:\n${r.q}\nReply With Answer`, m);
-      return true;
-    }
-
-    // ================= MATH =================
-    if(cmd === 'math'){
-      await sendAwait(sock, jid, m);
-      const a = Math.floor(Math.random()*20)+1;
-      const b = Math.floor(Math.random()*20)+1;
-      const ops = ['+','-','*'];
-      const op = ops[Math.floor(Math.random()*ops.length)];
-      let ans = op==='+' ? a+b : op==='-' ? a-b : a*b;
-      games.set(jid, { type:'math', answer: ans });
-      await facelessReply(sock, jid, `Math:\nWhat is ${a} ${op} ${b} ?\nReply With Answer`, m);
-      return true;
-    }
-
-    // ================= GUESS =================
-    if(cmd === 'guess'){
-      await sendAwait(sock, jid, m);
-      const num = Math.floor(Math.random()*100)+1;
-      games.set(jid, { type:'guess', answer: num });
-      await facelessReply(sock, jid, `Guess:\nI Have A Number Between 1-100\nReply With Your Guess`, m);
-      return true;
-    }
-
-    // ================= SLOT - REAL RANDOM =================
-    if(cmd === 'slot'){
-      await sendAwait(sock, jid, m);
-      const emojis = ['🍒','🍋','🔔','💎','7️⃣','🍇','⭐'];
-      const s1 = emojis[Math.floor(Math.random()*emojis.length)];
-      const s2 = emojis[Math.floor(Math.random()*emojis.length)];
-      const s3 = emojis[Math.floor(Math.random()*emojis.length)];
-      let result = "You Lose!";
-      let winCoins = 0;
-      if(s1===s2 && s2===s3){ result = "JACKPOT! You Win 500 Coins"; winCoins = 500; }
-      else if(s1===s2 || s2===s3 || s1===s3){ result = "You Win 100 Coins"; winCoins = 100; }
-      if(winCoins>0){
-        try{ require('./economy').addCoins(sender, winCoins); }catch{}
-      }
-      await facelessReply(sock, jid, `Slot Machine:\n[ ${s1} | ${s2} | ${s3} ]\n${result}`, m);
-      return true;
-    }
-
-    // ================= DICE =================
-    if(cmd === 'dice'){
-      await sendAwait(sock, jid, m);
-      const d = Math.floor(Math.random()*6)+1;
-      await facelessReply(sock, jid, `Dice Rolled: ${d} 🎲`, m);
-      return true;
-    }
-
-    // ================= COINFLIP =================
-    if(cmd === 'coinflip' || cmd === 'flip'){
-      await sendAwait(sock, jid, m);
-      const choice = (args[0]||"").toLowerCase();
-      const flip = Math.random() < 0.5 ? 'heads' : 'tails';
-      if(choice && (choice==='heads' || choice==='tails')){
-        const win = choice === flip;
-        await facelessReply(sock, jid, `Coin: ${flip}\nYou Chose: ${choice}\n${win ? 'You Win!' : 'You Lose!'}`, m);
-      } else {
-        await facelessReply(sock, jid, `Coin: ${flip}\nUsage: .coinflip heads / tails`, m);
-      }
-      return true;
-    }
-
-    // ================= RPS =================
+    // Instant games - no state
     if(cmd === 'rps'){
-      await sendAwait(sock, jid, m);
-      const choice = (args[0]||"").toLowerCase();
-      const valid = ['rock','paper','scissors'];
-      if(!valid.includes(choice)){
-        await facelessReply(sock, jid, "Usage: .rps rock / paper / scissors", m);
-        return true;
-      }
-      const bot = valid[Math.floor(Math.random()*3)];
-      let res = "Draw!";
-      if((choice==='rock' && bot==='scissors') || (choice==='paper' && bot==='rock') || (choice==='scissors' && bot==='paper')) res = "You Win!";
-      else if(choice !== bot) res = "Bot Wins!";
-      await facelessReply(sock, jid, `RPS:\nYou: ${choice}\nBot: ${bot}\n${res}`, m);
+      const choice = (args[0]||'').toLowerCase();
+      if(!['rock','paper','scissors'].includes(choice)){ await sock.sendMessage(jid, { text: 'Usage: .rps rock / paper / scissors' }, { quoted: m }); return true; }
+      const bot = ['rock','paper','scissors'][Math.floor(Math.random()*3)];
+      const win = (choice==='rock'&&bot==='scissors')||(choice==='paper'&&bot==='rock')||(choice==='scissors'&&bot==='paper');
+      const draw = choice===bot;
+      await sock.sendMessage(jid, { text: `✂️ *RPS*\nYou: ${choice}\nBot: ${bot}\n\n${draw?'🤝 Draw!':win?'🎉 You win!':'💀 Bot wins!'}` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'coinflip'){
+      const r = Math.random()<0.5?'Heads':'Tails';
+      await sock.sendMessage(jid, { text: `🪙 CoinFlip: *${r}*\n${args[0] ? (args[0].toLowerCase()===r.toLowerCase()?'🎉 You guessed right!':'❌ Wrong guess') : ''}` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'dice'){
+      const n = Math.floor(Math.random()*6)+1;
+      await sock.sendMessage(jid, { text: `🎲 Dice: *${n}*\n${'🎲'.repeat(n)}` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'slots'){
+      const s = ['🍒','🍋','🔔','💎','⭐','7️⃣'];
+      const a = s[Math.floor(Math.random()*s.length)], b = s[Math.floor(Math.random()*s.length)], c = s[Math.floor(Math.random()*s.length)];
+      const win = a===b && b===c;
+      await sock.sendMessage(jid, { text: `🎰 SLOTS\n| ${a} | ${b} | ${c} |\n\n${win?'🎉 JACKPOT! All match!':'❌ Try again'}` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'truth'){
+      await sock.sendMessage(jid, { text: `😏 *TRUTH*\n${TRUTHS[Math.floor(Math.random()*TRUTHS.length)]}` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'dare'){
+      await sock.sendMessage(jid, { text: `😈 *DARE*\n${DARES[Math.floor(Math.random()*DARES.length)]}` }, { quoted: m });
       return true;
     }
 
-    // ================= TICTACTOE =================
-    if(cmd === 'tictactoe' || cmd === 'ttt'){
-      await sendAwait(sock, jid, m);
-      const ctx = m.message?.extendedTextMessage?.contextInfo;
-      const opponent = ctx?.mentionedJid?.[0];
-      if(!opponent){
-        await facelessReply(sock, jid, "Usage: .tictactoe @opponent", m);
-        return true;
-      }
-      if(tttGames.has(jid)){
-        await facelessReply(sock, jid, "A Game Is Already Running In This Chat", m);
-        return true;
-      }
-      tttGames.set(jid, { board: Array(9).fill(null), p1: sender, p2: opponent, turn: sender });
-      await sock.sendMessage(jid, {
-        text: `▫️ 💀 TicTacToe Started\n\n${formatTTT(Array(9).fill(null))}\n\n@${sender.split('@')[0]} (❌) vs @${opponent.split('@')[0]} (⭕)\nTurn: @${sender.split('@')[0]} - Send 1-9`,
-        mentions: [sender, opponent]
-      }, { quoted: m });
+    // State games
+    if(cmd === 'quiz' || cmd === 'trivia'){
+      const q = QUIZ[Math.floor(Math.random()*QUIZ.length)];
+      setGame(jid, { type:'quiz', player: sender, answer: q.a, tries:0 });
+      await sock.sendMessage(jid, { text: `🧠 *QUIZ*\n\n${q.q}\n\n${q.opts.map((o,i)=>`${i+1}. ${o}`).join('\n')}\n\nReply with answer (text or number)` }, { quoted: m });
       return true;
     }
-
-    // ================= STOPGAME =================
-    if(cmd === 'stopgame'){
-      await sendAwait(sock, jid, m);
-      games.delete(jid);
-      tttGames.delete(jid);
-      await facelessReply(sock, jid, "Game Stopped", m);
+    if(cmd === 'riddle' || cmd === 'puzzle'){
+      const r = RIDDLES[Math.floor(Math.random()*RIDDLES.length)];
+      setGame(jid, { type:'quiz', player: sender, answer: r.a, tries:0 });
+      await sock.sendMessage(jid, { text: `🧩 *RIDDLE*\n\n${r.q}\n\nReply with your answer` }, { quoted: m });
       return true;
     }
-
+    if(cmd === 'math'){
+      const a = Math.floor(Math.random()*20)+1, b = Math.floor(Math.random()*20)+1;
+      const op = ['+','-','*'][Math.floor(Math.random()*3)];
+      const ans = op==='+'?a+b : op==='-'?a-b : a*b;
+      setGame(jid, { type:'math', player: sender, answer: String(ans), tries:0 });
+      await sock.sendMessage(jid, { text: `🧮 *MATH*\n\nWhat is ${a} ${op} ${b} ?\nReply with number` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'guess' || cmd === 'guessnumber'){
+      const num = Math.floor(Math.random()*100)+1;
+      setGame(jid, { type:'guessnumber', player: sender, answer: String(num), tries:0 });
+      await sock.sendMessage(jid, { text: `🔢 *GUESS NUMBER*\n\nI picked 1-100. Guess it!\nYou have 5 tries. Reply with number` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'guessword'){
+      const w = WORDS[Math.floor(Math.random()*WORDS.length)];
+      setGame(jid, { type:'guessword', player: sender, answer: w, tries:0 });
+      await sock.sendMessage(jid, { text: `🔤 *GUESS WORD*\n\nHint: ${w.length} letters, starts with ${w[0].toUpperCase()}\nScrambled: ${scramble(w)}\nReply with word` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'scramble'){
+      const w = SCRAMBLE_WORDS[Math.floor(Math.random()*SCRAMBLE_WORDS.length)];
+      setGame(jid, { type:'scramble', player: sender, answer: w, tries:0 });
+      await sock.sendMessage(jid, { text: `🔀 *SCRAMBLE*\n\nUnscramble: *${scramble(w)}*\nReply with word` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'hangman'){
+      const w = WORDS[Math.floor(Math.random()*WORDS.length)];
+      setGame(jid, { type:'hangman', player: sender, word: w, guessed:[], lives:6, answer: w });
+      await sock.sendMessage(jid, { text: `🎯 *HANGMAN*\n\n${w.split('').map(()=> '_').join(' ')}\nLives: 6\nReply with ONE letter` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'tictactoe'){
+      const opponent = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+      const p2 = opponent || 'bot';
+      setGame(jid, { type:'tictactoe', p1: sender, p2, turn: sender, board: Array(9).fill(''), vsBot: !opponent });
+      await sock.sendMessage(jid, { text: `🎮 *TicTacToe*\n\n${boardStr(Array(9).fill(''))}\n\n❌ = @${sender.split('@')[0]}\n⭕ = ${p2==='bot'?'Bot': '@'+p2.split('@')[0]}\n\nReply with 1-9 to play`, mentions: p2==='bot'?[sender]:[sender,p2] }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'wordchain'){
+      setGame(jid, { type:'wordchain', used:[], lastLetter:'' });
+      await sock.sendMessage(jid, { text: `🔗 *WORD CHAIN*\n\nStart with any word!\nNext word must start with last letter of previous.\nReply with word to play` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'fasttype'){
+      const w = WORDS[Math.floor(Math.random()*WORDS.length)];
+      setGame(jid, { type:'fasttype', player: sender, answer: w, start: Date.now() });
+      await sock.sendMessage(jid, { text: `⚡ *FAST TYPE*\n\nType this FAST:\n*${w}*\nReply exactly` }, { quoted: m });
+      return true;
+    }
+    if(cmd === 'memory'){
+      const seq = Array.from({length:4},()=>Math.floor(Math.random()*9)+1).join(' ');
+      setGame(jid, { type:'memory', player: sender, answer: seq });
+      await sock.sendMessage(jid, { text: `🧠 *MEMORY*\n\nRemember: *${seq}*\n\nYou have 5 seconds...` }, { quoted: m });
+      setTimeout(async()=>{ try{ await sock.sendMessage(jid, { text: `🧠 Now reply with the sequence!\nExample: ${seq.split(' ')[0]} ...` }); }catch{} }, 5000);
+      return true;
+    }
     return false;
   }
 };
