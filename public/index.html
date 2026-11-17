@@ -3,12 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🐺 WOLF XMD TITAN</title>
+<title>👤 FACELESS - Dashboard</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',Arial,sans-serif}
 body{background:#0a0a0a;color:#fff;min-height:100vh;padding:20px}
 .container{max-width:520px;margin:0 auto}
 .logo{text-align:center;margin:20px 0}
+.pfp-wrap{position:relative;width:130px;height:130px;margin:0 auto 14px}
+.pfp-wrap::before{content:'';position:absolute;inset:-6px;border-radius:50%;background:conic-gradient(#00ff88,#00ccff,#ff00aa,#00ff88);animation:spin 4s linear infinite;z-index:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.pfp{position:relative;width:130px;height:130px;border-radius:50%;object-fit:cover;border:4px solid #0a0a0a;z-index:1;display:block;background:#222}
+.online-badge{position:absolute;bottom:8px;right:8px;width:22px;height:22px;background:#00ff88;border:3px solid #0a0a0a;border-radius:50%;z-index:2}
 .logo h1{font-size:42px}
 .logo p{color:#888;margin-top:5px}
 .card{background:#151515;border:1px solid #222;border-radius:16px;padding:20px;margin-bottom:15px}
@@ -37,8 +42,13 @@ a{color:#00ff88;text-decoration:none}
 <body>
 <div class="container">
   <div class="logo">
-    <h1>🐺 WOLF XMD</h1>
-    <p>WOLF XMD TITAN - V3 | Owner: 239166265317</p>
+    <!-- 👤 BOT PFP ON TOP -->
+    <div class="pfp-wrap">
+      <img class="pfp" src="https://files.catbox.moe/40o4hu.webp" alt="FACELESS Bot" onerror="this.src='https://files.catbox.moe/40o4hu.webp'">
+      <div class="online-badge" id="pfpBadge"></div>
+    </div>
+    <h1>👤 FACELESS</h1>
+    <p>FACELESS XMD TITAN - V3 | Owner: 239166265317</p>
   </div>
 
   <div class="card">
@@ -74,10 +84,10 @@ a{color:#00ff88;text-decoration:none}
   <div class="card">
     <h3>🛠️ Actions</h3>
     <button class="secondary" onclick="checkStatus()">🔄 Refresh Status</button>
-    <button class="secondary" onclick="logout()" style="color:#ff4444;border-color:#ff4444">🚪 Logout & Unlink</button>
+    <button class="secondary" onclick="logout()" style="color:#ff4444;border-color:#ff4444">🚪 Logout &amp; Unlink</button>
   </div>
 
-  <div class="footer">🐺 WOLF XMD TITAN © 2026 | <a href="/api/status">API Status</a> | <a href="/health">Health</a></div>
+  <div class="footer">👤 FACELESS XMD TITAN © 2026 | <a href="/api/status">API Status</a> | <a href="/health">Health</a></div>
 </div>
 
 <script>
@@ -89,9 +99,10 @@ async function checkStatus(){
     document.getElementById('cmdCount').textContent = d.plugins || d.cmds?.length || 0;
     document.getElementById('plugCount').textContent = d.plugins || 0;
     const dot = document.getElementById('dot');
-    if(d.isConnected){ dot.className='dot online'; document.getElementById('pairCard').style.display='none'; }
-    else if(d.status && d.status.includes('CODE')){ dot.className='dot connecting'; }
-    else { dot.className='dot'; }
+    const badge = document.getElementById('pfpBadge');
+    if(d.isConnected){ dot.className='dot online'; badge.style.background='#00ff88'; document.getElementById('pairCard').style.display='none'; }
+    else if(d.status && d.status.includes('CODE')){ dot.className='dot connecting'; badge.style.background='#ffaa00'; }
+    else { dot.className='dot'; badge.style.background='#ff4444'; }
     if(d.cmds && Array.isArray(d.cmds)){
       document.getElementById('cmdsList').textContent = '.' + d.cmds.join('  .');
     } else if(d.cmds){
@@ -133,4 +144,4 @@ checkStatus();
 setInterval(checkStatus, 5000);
 </script>
 </body>
-  </html>
+</html>
