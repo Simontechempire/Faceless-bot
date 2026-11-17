@@ -22,12 +22,18 @@ module.exports = {
   newsletterName: process.env.NEWSLETTER_NAME || "FACELESS BOT",
 
   // --- BOT PFP - Catbox Link - Set Once Only ---
+  // Put your real Catbox link here OR in .env as BOT_PFP=
   botPfp: process.env.BOT_PFP || "https://files.catbox.moe/xxxxxx.jpg",
+  // Also read by menu.js as fallback keys
+  pfp: process.env.BOT_PFP || "https://files.catbox.moe/xxxxxx.jpg",
+  menuImage: process.env.BOT_PFP || "https://files.catbox.moe/xxxxxx.jpg",
   botBio: "FACELESS BOT - Prefix . | Owner +234 903 748 3649",
 
   // --- PAIRING WEBSITE ---
   port: process.env.PORT || 3000,
+  PORT: process.env.PORT || 3000,
   sessionId: process.env.SESSION_ID || "faceless-session",
+  sessionName: process.env.SESSION_ID || "faceless-session",
 
   // --- ANTI FEATURES - Default OFF, Owner Turns ON Per Group ---
   anti: {
@@ -113,6 +119,7 @@ module.exports = {
 
   // --- PREFIXES - Allow Multiple ---
   prefixes: [".", "!", "#", "/"],
+  prefixList: [".", "!", "#", "/"],
 
   // --- TIMEZONE ---
   timezone: "Africa/Lagos",
@@ -122,6 +129,21 @@ module.exports = {
     autoread: true,
     autotype: false,
     autoreact: false,
-    autoviewStatus: false
+    autoviewStatus: false,
+    autostatus: false,
+    autorecord: false,
+    autotyping: false,
+    autobio: false,
+    autolikestatus: false,
+    autodownload: false,
+    alwaysonline: false,
+    autoreply: false,
+    autosticker: false,
+    autotranslate: false,
+    autoblock: false,
+    autovoice: false,
+    autowelcome: false,
+    autogoodbye: false,
+    autosave: false
   }
 };
