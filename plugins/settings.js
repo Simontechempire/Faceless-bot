@@ -1,207 +1,214 @@
-const { facelessReply, sendAwait } = require('../lib/function');
+// ⚙️ FACELESS - SETTINGS PLUGIN - REAL HANDLER
+// Group settings: antilink, welcome, goodbye, antispam, antilink2, antibadword, autoreact, etc
+// Bot settings: mode, prefix, autobio, etc - stored in memory + JSON file
+
 const fs = require('fs');
 const path = require('path');
 
-const settingsPath = path.join(__dirname, '../database/settings.json');
+let SETTINGS = {};
+const SETTINGS_FILE = path.join(__dirname, '../settings.json');
 
-function loadSettings(){
-  try{ if(fs.existsSync(settingsPath)) return JSON.parse(fs.readFileSync(settingsPath,'utf8')); }catch{}
-  return {
-    prefix: '.',
-    mode: 'public', // public | self
-    botName: 'META AI V2',
-    ownerName: 'SIMON TECH',
-    autoreply: false,
-    autoreplyText: 'Hello! I am META AI V2. Type .menu for commands.',
-    menuImage: '',
-    antistatus: false,
-    readReceipts: false,
-    autoStatusReply: false,
-    antilink: {},
-    antisticker: {},
-    antidelete: {},
-    antibadword: {},
-    welcome: {},
-    goodbye: {}
+// Load
+try{ if(fs.existsSync(SETTINGS_FILE)) SETTINGS = JSON.parse(fs.readFileSync(SETTINGS_FILE,'utf8')); }catch{ SETTINGS = {}; }
+function save(){
+  try{ fs.writeFileSync(SETTINGS_FILE, JSON.stringify(SETTINGS, null, 2)); }catch{}
+}
+function getGroup(jid){
+  if(!SETTINGS.groups) SETTINGS.groups = {};
+  if(!SETTINGS.groups[jid]) SETTINGS.groups[jid] = {
+    antilink: false, antilink2: false, welcome: false, goodbye: false,
+    antispam: false, antibadword: false, antisticker: false, antiviewonce: false,
+    antilinkall: false, antitag: false, antimedia: false, autoreact: false,
+    nsfw: false, economy: true, games: true, fun: true, chat: true,
+    onlyadmin: false, onlyowner: false, muted: false
   };
+  return SETTINGS.groups[jid];
 }
-function saveSettings(d){
-  try{ fs.mkdirSync(path.dirname(settingsPath),{recursive:true}); fs.writeFileSync(settingsPath, JSON.stringify(d,null,2)); }catch{}
+function getBot(){
+  if(!SETTINGS.bot) SETTINGS.bot = {
+    mode: 'public', prefix: '.', autobio: false, autoread: false,
+    autotype: false, autoreact: false, antidelete: false, antcall: false,
+    autorecord: false, anticall: false, statusview: false, alwaysonline: false
+  };
+  return SETTINGS.bot;
 }
-function getSettings(){ return loadSettings(); }
-function getPrefix(){ return loadSettings().prefix || '.'; }
+
+const GROUP_TOGGLES = {
+  antilink: 'Anti-Link - deletes WhatsApp / Telegram links',
+  antilink2: 'Anti-Link 2 - deletes ALL links',
+  antilinkall: 'Anti-Link All - deletes any URL',
+  welcome: 'Welcome - welcomes new members',
+  goodbye: 'Goodbye - says bye to leavers',
+  antispam: 'Anti-Spam - kicks spammers',
+  antibadword: 'Anti-Badword - deletes bad words',
+  antisticker: 'Anti-Sticker - deletes stickers',
+  antiviewonce: 'Anti-ViewOnce - resends view-once',
+  antitag: 'Anti-TagAll - blocks tagall spam',
+  antimedia: 'Anti-Media - deletes photos/videos (strict)',
+  autoreact: 'Auto-React - reacts to messages',
+  nsfw: 'NSFW - allows anime NSFW (SFW only in this bot)',
+  economy: 'Economy - allows .daily .balance .work',
+  games: 'Games - allows .ttt .quiz .guess',
+  fun: 'Fun - allows .joke .meme .roast',
+  chat: 'Chat - allows .chat AI',
+  onlyadmin: 'Only Admin - only admins can use bot',
+  onlyowner: 'Only Owner - only owner can use bot',
+  muted: 'Muted - bot silent in group',
+};
+
+const BOT_TOGGLES = {
+  mode: 'Mode - public / private / self',
+  prefix: 'Prefix - . / ! / #',
+  autobio: 'Auto-Bio - updates bio with time',
+  autoread: 'Auto-Read - marks messages read',
+  autotype: 'Auto-Type - shows typing',
+  autoreact: 'Auto-React - reacts to all messages',
+  antidelete: 'Anti-Delete - resends deleted messages',
+  antcall: 'Anti-Call - rejects calls',
+  anticall: 'Anti-Call - rejects calls',
+  autorecord: 'Auto-Record - shows recording',
+  statusview: 'Status View - views all statuses',
+  alwaysonline: 'Always Online - always online',
+};
+
+const COMMANDS = ['settings','setting','set','toggle','enable','disable','on','off','antilink','welcome','goodbye','antispam','antibadword','antisticker','antiviewonce','antitag','antimedia','autoreact','nsfw','economy','games','fun','chat','onlyadmin','onlyowner','muted','mode','prefix','autobio','autoread','autotype','antidelete','antcall','anticall','autorecord','statusview','alwaysonline','groupsettings','botsettings','botsetting','config','viewsettings','resetsettings','antilinkall','antilink2'];
 
 module.exports = {
-  name: "settings",
-  loadSettings, saveSettings, getSettings, getPrefix,
+  name: 'settings',
+  commands: COMMANDS,
+  // Export helpers for index.js to use in message handler
+  getGroup, getBot, SETTINGS, save,
+  run: async (sock, m, jid, cmd, args, text, isOwner, isGroup, sender) => {
+    if(!COMMANDS.includes(cmd)) return false;
 
-  async run(sock, m, jid, cmd, args, text, isOwner, isGroup, sender){
-
-    const setCmds = ['setprefix','prefix','mode','setmode','setbotname','botname','setowner','setmenuimage','menuimage','autoreply','setautoreply','settings','setting','allsettings','resetsettings','antistatus','setwelcome','setgoodbye'];
-    if(!setCmds.includes(cmd)) return false;
-
-    if(!isOwner){
-      await facelessReply(sock, jid, "This Command Is For Owner Only", m);
-      return true;
-    }
-    await sendAwait(sock, jid, m);
-
-    // ================= VIEW ALL SETTINGS - REAL =================
-    if(cmd === 'settings' || cmd === 'setting' || cmd === 'allsettings'){
-      const s = loadSettings();
-      await facelessReply(sock, jid,
-`▫️ 💀 BOT SETTINGS
-
-Prefix: ${s.prefix}
-Mode: ${s.mode}
-Bot Name: ${s.botName}
-Owner Name: ${s.ownerName}
-AutoReply: ${s.autoreply ? 'ON' : 'OFF'}
-AutoReply Text: ${s.autoreplyText}
-Menu Image: ${s.menuImage ? 'Set' : 'Not Set'}
-AntiStatus: ${s.antistatus ? 'ON' : 'OFF'}
-
-Change With:
-.setprefix !
-.mode self
-.setbotname New Name
-.autoreply on
-.setautoreply <text>
-.setmenuimage <link>`, m);
-      return true;
+    // --- Helper: check admin ---
+    async function isAdmin(){
+      if(!isGroup) return true;
+      try{
+        const meta = await sock.groupMetadata(jid);
+        const p = meta.participants.find(x=>x.id===sender);
+        return p?.admin==='admin' || p?.admin==='superadmin' || isOwner;
+      }catch{ return isOwner; }
     }
 
-    // ================= SET PREFIX - REAL =================
-    if(cmd === 'setprefix' || cmd === 'prefix'){
-      const newPrefix = args[0];
-      if(!newPrefix || newPrefix.length > 2){
-        await facelessReply(sock, jid, "Usage: .setprefix !\nExample: .setprefix ! / .setprefix /", m);
+    // --- SETTINGS MENU ---
+    if(cmd==='settings' || cmd==='setting' || cmd==='groupsettings' || cmd==='viewsettings' || cmd==='config'){
+      if(!isGroup){
+        const bot = getBot();
+        let msg = `⚙️ *BOT SETTINGS*\n\n`;
+        msg += `Mode: ${bot.mode}\nPrefix: ${bot.prefix}\nAuto-Bio: ${bot.autobio?'ON ✅':'OFF ❌'}\nAuto-Read: ${bot.autoread?'ON ✅':'OFF ❌'}\nAuto-Type: ${bot.autotype?'ON ✅':'OFF ❌'}\nAnti-Delete: ${bot.antidelete?'ON ✅':'OFF ❌'}\nAnti-Call: ${bot.antcall?'ON ✅':'OFF ❌'}\n\n_Usage: .mode public / .prefix ! / .autobio on_\n_Only owner can change bot settings_`;
+        await sock.sendMessage(jid, { text: msg }, { quoted: m });
         return true;
       }
-      const s = loadSettings();
-      s.prefix = newPrefix;
-      saveSettings(s);
-      await facelessReply(sock, jid, `Prefix Changed To: ${newPrefix}\nExample: ${newPrefix}menu`, m);
+      const g = getGroup(jid);
+      let msg = `⚙️ *GROUP SETTINGS*\n\n`;
+      for(const [k,v] of Object.entries(g)){
+        const label = GROUP_TOGGLES[k]||k;
+        msg += `${v?'✅':'❌'} .${k} - ${label}\n`;
+      }
+      msg += `\n_Usage: .antilink on / .welcome off_\n_Admins + Owner only_`;
+      await sock.sendMessage(jid, { text: msg }, { quoted: m });
       return true;
     }
 
-    // ================= MODE - REAL public / self =================
-    if(cmd === 'mode' || cmd === 'setmode'){
-      const mode = (args[0]||'').toLowerCase();
-      if(mode !== 'public' && mode !== 'self'){
-        await facelessReply(sock, jid, "Usage: .mode public / .mode self\nPublic = Everyone Can Use Bot\nSelf = Only Owner", m);
+    if(cmd==='botsettings' || cmd==='botsetting'){
+      const bot = getBot();
+      let msg = `🤖 *BOT SETTINGS*\n\n`;
+      for(const [k,v] of Object.entries(bot)){
+        msg += `${k}: ${v}\n`;
+      }
+      msg += `\n_Usage: .mode public / .prefix !_\n_Only owner_`;
+      await sock.sendMessage(jid, { text: msg }, { quoted: m });
+      return true;
+    }
+
+    // --- RESET ---
+    if(cmd==='resetsettings'){
+      if(!(await isAdmin())){ await sock.sendMessage(jid, { text: '❌ Only admins / owner can do this' }, { quoted: m }); return true; }
+      if(isGroup){ delete SETTINGS.groups[jid]; save(); await sock.sendMessage(jid, { text: '✅ Group settings reset to default' }, { quoted: m }); }
+      else { SETTINGS.bot = null; save(); await sock.sendMessage(jid, { text: '✅ Bot settings reset' }, { quoted: m }); }
+      return true;
+    }
+
+    // --- GROUP TOGGLES ---
+    if(GROUP_TOGGLES[cmd]){
+      if(!isGroup){ await sock.sendMessage(jid, { text: `❌ .${cmd} is only for groups` }, { quoted: m }); return true; }
+      if(!(await isAdmin())){ await sock.sendMessage(jid, { text: '❌ Only group admins / owner can change settings' }, { quoted: m }); return true; }
+      const arg = (args[0]||'').toLowerCase();
+      const g = getGroup(jid);
+      if(arg==='on' || arg==='enable' || arg==='1' || arg==='true'){
+        g[cmd]=true; save();
+        await sock.sendMessage(jid, { text: `✅ *${cmd.toUpperCase()} ENABLED*\n\n${GROUP_TOGGLES[cmd]}` }, { quoted: m });
+      } else if(arg==='off' || arg==='disable' || arg==='0' || arg==='false'){
+        g[cmd]=false; save();
+        await sock.sendMessage(jid, { text: `❌ *${cmd.toUpperCase()} DISABLED*\n\n${GROUP_TOGGLES[cmd]}` }, { quoted: m });
+      } else {
+        // Toggle if no arg
+        g[cmd]=!g[cmd]; save();
+        await sock.sendMessage(jid, { text: `${g[cmd]?'✅':'❌'} *${cmd.toUpperCase()}* is now ${g[cmd]?'ON':'OFF'}\n\n${GROUP_TOGGLES[cmd]}\n\n_Usage: .${cmd} on / .${cmd} off_` }, { quoted: m });
+      }
+      return true;
+    }
+
+    // --- ENABLE / DISABLE generic ---
+    if(cmd==='enable' || cmd==='disable' || cmd==='toggle' || cmd==='on' || cmd==='off'){
+      if(!isGroup){ await sock.sendMessage(jid, { text: '❌ Use in group' }, { quoted: m }); return true; }
+      if(!(await isAdmin())){ await sock.sendMessage(jid, { text: '❌ Only admins' }, { quoted: m }); return true; }
+      const feature = (args[0]||'').toLowerCase().replace('.','');
+      if(!GROUP_TOGGLES[feature] && !BOT_TOGGLES[feature]){ await sock.sendMessage(jid, { text: `❌ Unknown feature: ${feature}\n\nAvailable: ${Object.keys(GROUP_TOGGLES).join(', ')}` }, { quoted: m }); return true; }
+      const g = getGroup(jid);
+      const newVal = cmd==='enable' || cmd==='on' ? true : cmd==='disable' || cmd==='off' ? false : !g[feature];
+      g[feature]=newVal; save();
+      await sock.sendMessage(jid, { text: `${newVal?'✅':'❌'} *${feature.toUpperCase()}* is now ${newVal?'ON':'OFF'}` }, { quoted: m });
+      return true;
+    }
+
+    // --- SET generic ---
+    if(cmd==='set'){
+      const feature = (args[0]||'').toLowerCase();
+      const value = args[1]||'';
+      if(GROUP_TOGGLES[feature]){
+        if(!(await isAdmin())){ await sock.sendMessage(jid, { text: '❌ Only admins' }, { quoted: m }); return true; }
+        const g = getGroup(jid);
+        g[feature] = value==='on' ? true : value==='off' ? false : value;
+        save(); await sock.sendMessage(jid, { text: `✅ ${feature} set to ${g[feature]}` }, { quoted: m }); return true;
+      }
+      if(feature==='prefix' || feature==='mode'){
+        if(!isOwner){ await sock.sendMessage(jid, { text: '❌ Only owner' }, { quoted: m }); return true; }
+        const bot = getBot();
+        bot[feature]=value; save(); await sock.sendMessage(jid, { text: `✅ Bot ${feature} set to ${value}` }, { quoted: m }); return true;
+      }
+      await sock.sendMessage(jid, { text: 'Usage: .set antilink on / .set mode public / .set prefix !' }, { quoted: m });
+      return true;
+    }
+
+    // --- BOT TOGGLES - owner only ---
+    if(BOT_TOGGLES[cmd]){
+      if(!isOwner){ await sock.sendMessage(jid, { text: '❌ Only owner can change bot settings' }, { quoted: m }); return true; }
+      const bot = getBot();
+      // Special: mode / prefix need value
+      if(cmd==='mode'){
+        const mode = (args[0]||'').toLowerCase();
+        if(!['public','private','self'].includes(mode)){ await sock.sendMessage(jid, { text: 'Usage: .mode public / private / self\n\npublic = everyone can use\nprivate = only owner\nself = only owner in DM' }, { quoted: m }); return true; }
+        bot.mode=mode; save();
+        await sock.sendMessage(jid, { text: `✅ *MODE* set to ${mode.toUpperCase()}` }, { quoted: m });
         return true;
       }
-      const s = loadSettings();
-      s.mode = mode;
-      saveSettings(s);
-      await facelessReply(sock, jid, `Bot Mode Changed To: ${mode.toUpperCase()}`, m);
-      return true;
-    }
-
-    // ================= BOT NAME =================
-    if(cmd === 'setbotname' || cmd === 'botname'){
-      if(!text){ await facelessReply(sock, jid, "Usage: .setbotname META AI V2", m); return true; }
-      const s = loadSettings();
-      s.botName = text;
-      saveSettings(s);
-      await facelessReply(sock, jid, `Bot Name Changed To: ${text}`, m);
-      return true;
-    }
-
-    // ================= OWNER NAME =================
-    if(cmd === 'setowner'){
-      if(!text){ await facelessReply(sock, jid, "Usage: .setowner Simon Tech", m); return true; }
-      const s = loadSettings();
-      s.ownerName = text;
-      saveSettings(s);
-      await facelessReply(sock, jid, `Owner Name Changed To: ${text}`, m);
-      return true;
-    }
-
-    // ================= MENU IMAGE - REAL =================
-    if(cmd === 'setmenuimage' || cmd === 'menuimage'){
-      if(!text || !text.startsWith('http')){
-        await facelessReply(sock, jid, "Usage: .setmenuimage <image link>", m);
+      if(cmd==='prefix'){
+        const p = args[0]||'.';
+        bot.prefix=p; save();
+        await sock.sendMessage(jid, { text: `✅ *PREFIX* set to ${p}\n\nRestart bot to apply fully` }, { quoted: m });
         return true;
       }
-      const s = loadSettings();
-      s.menuImage = text;
-      saveSettings(s);
-      await facelessReply(sock, jid, `Menu Image Set\nIt Will Show On .menu`, m);
-      return true;
-    }
-
-    // ================= AUTOREPLY - REAL =================
-    if(cmd === 'autoreply'){
-      const action = (args[0]||'').toLowerCase();
-      if(action !== 'on' && action !== 'off'){
-        await facelessReply(sock, jid, "Usage: .autoreply on / .autoreply off", m);
-        return true;
-      }
-      const s = loadSettings();
-      s.autoreply = action === 'on';
-      saveSettings(s);
-      await facelessReply(sock, jid, `AutoReply Turned ${action.toUpperCase()}`, m);
-      return true;
-    }
-    if(cmd === 'setautoreply'){
-      if(!text){ await facelessReply(sock, jid, "Usage: .setautoreply <text>", m); return true; }
-      const s = loadSettings();
-      s.autoreplyText = text;
-      s.autoreply = true;
-      saveSettings(s);
-      await facelessReply(sock, jid, `AutoReply Text Set To:\n${text}`, m);
-      return true;
-    }
-
-    // ================= ANTISTATUS - REAL =================
-    if(cmd === 'antistatus'){
-      const action = (args[0]||'').toLowerCase();
-      if(action !== 'on' && action !== 'off'){
-        await facelessReply(sock, jid, "Usage: .antistatus on / .antistatus off", m);
-        return true;
-      }
-      const s = loadSettings();
-      s.antistatus = action === 'on';
-      saveSettings(s);
-      await facelessReply(sock, jid, `AntiStatus Turned ${action.toUpperCase()}`, m);
-      return true;
-    }
-
-    // ================= WELCOME / GOODBYE TEXT - REAL =================
-    if(cmd === 'setwelcome' || cmd === 'setgoodbye'){
-      if(!isGroup){ await facelessReply(sock, jid, "Use In Group Only", m); return true; }
-      if(!text){ await facelessReply(sock, jid, `Usage: .${cmd} <message>\nUse @user for mention`, m); return true; }
-      const s = loadSettings();
-      const key = cmd === 'setwelcome' ? 'welcome' : 'goodbye';
-      if(!s[key]) s[key] = {};
-      s[key][jid] = text;
-      saveSettings(s);
-      await facelessReply(sock, jid, `${key} Message Set For This Group:\n${text}`, m);
-      return true;
-    }
-
-    // ================= RESET - REAL =================
-    if(cmd === 'resetsettings'){
-      if(fs.existsSync(settingsPath)) fs.unlinkSync(settingsPath);
-      await facelessReply(sock, jid, "All Settings Reset To Default\nPrefix: .\nMode: public", m);
+      const arg = (args[0]||'').toLowerCase();
+      if(arg==='on' || arg==='enable') bot[cmd]=true;
+      else if(arg==='off' || arg==='disable') bot[cmd]=false;
+      else bot[cmd]=!bot[cmd];
+      save();
+      await sock.sendMessage(jid, { text: `${bot[cmd]?'✅':'❌'} *${cmd.toUpperCase()}* is now ${bot[cmd]?'ON':'OFF'}` }, { quoted: m });
       return true;
     }
 
     return false;
-  },
-
-  // ===== REAL AUTOREPLY ENFORCER - Called from index.js =====
-  async handleAutoReply(sock, m, jid){
-    const s = loadSettings();
-    if(!s.autoreply) return false;
-    // Only reply if message is NOT a command
-    const body = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
-    if(body.startsWith(s.prefix)) return false;
-    try{
-      await facelessReply(sock, jid, s.autoreplyText, m);
-      return true;
-    }catch{ return false; }
   }
 };
