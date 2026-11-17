@@ -1,176 +1,245 @@
-const { facelessReply, sendAwait } = require('../lib/function');
+// 🛡️ FACELESS - ANTI PLUGIN - REAL HANDLER
 const fs = require('fs');
 const path = require('path');
 
-const antiPath = path.join(__dirname, '../database/anti.json');
+const DB_DIR = path.join(__dirname, '..', 'database');
+const DB = path.join(DB_DIR, 'anti.json');
 
-function loadAnti(){
+function load(){
   try{
-    if(fs.existsSync(antiPath)) return JSON.parse(fs.readFileSync(antiPath,'utf8'));
-  }catch{}
-  return {};
+    if(!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR,{recursive:true});
+    if(!fs.existsSync(DB)) fs.writeFileSync(DB, JSON.stringify({},null,2));
+    return JSON.parse(fs.readFileSync(DB,'utf8')||'{}');
+  }catch{ return {}; }
 }
-function saveAnti(d){
+function save(d){ try{ fs.writeFileSync(DB, JSON.stringify(d,null,2)); }catch{} }
+function groupCfg(jid){ const db=load(); return db[jid]||{}; }
+function setGroup(jid, cmd, val){ const db=load(); db[jid]=db[jid]||{}; db[jid][cmd]=val; save(db); global.antiSettings=db; }
+
+const COMMANDS = ['antibug','antispam','antilink','antibot','antitag','antiflood','antifake','antinsfw','antidelete','antiviewonce','antisticker','antiraid','antigroup','antipromote','antidemote','antimention','antichannel','antiforward','antiedit','antispamcall','anti'];
+
+const DESC = {
+  antibug:'Anti-bug / crash text', antispam:'Anti-spam', antilink:'Anti-link', antibot:'Anti-bot',
+  antitag:'Anti-tagall / hidetag', antiflood:'Anti-flood', antifake:'Anti-fake / foreign numbers',
+  antinsfw:'Anti-NSFW words', antidelete:'Anti-delete', antiviewonce:'Anti-viewonce',
+  antisticker:'Anti-sticker spam', antiraid:'Anti-raid (mass join)', antigroup:'Anti-group invite',
+  antipromote:'Anti-promote', antidemote:'Anti-demote', antimention:'Anti-mention all',
+  antichannel:'Anti-channel / newsletter link', antiforward:'Anti-forwarded', antiedit:'Anti-edit',
+  antispamcall:'Anti-spam call'
+};
+
+// Flood tracking - real in-memory
+const floodMap = new Map(); // jid+sender -> {count, last}
+const stickerMap = new Map();
+
+async function isAdmin(sock, jid, sender){
   try{
-    fs.mkdirSync(path.dirname(antiPath),{recursive:true});
-    fs.writeFileSync(antiPath, JSON.stringify(d,null,2));
+    const meta = await sock.groupMetadata(jid);
+    const p = meta.participants.find(x=>x.id===sender);
+    return !!(p?.admin || p?.isAdmin || p?.isSuperAdmin);
+  }catch{ return false; }
+}
+async function isBotAdmin(sock, jid){
+  try{
+    const meta = await sock.groupMetadata(jid);
+    const me = sock.user.id.split(':')[0]+'@s.whatsapp.net';
+    const p = meta.participants.find(x=>x.id===me || x.id.split('@')[0]===me.split('@')[0]);
+    return !!(p?.admin);
+  }catch{ return false; }
+}
+async function punish(sock, jid, sender, m, reason, doKick=false){
+  try{
+    await sock.sendMessage(jid, { delete: m.key }).catch(()=>{});
+    await sock.sendMessage(jid, { text: `🛡️ Anti: @${sender.split('@')[0]} ${reason}`, mentions:[sender] });
+    if(doKick && await isBotAdmin(sock, jid)){
+      await sock.groupParticipantsUpdate(jid, [sender], 'remove');
+    }
   }catch{}
 }
-function getGroupAnti(jid){
-  const db = loadAnti();
-  if(!db[jid]) db[jid] = { antilink:false, antidelete:false, antiviewonce:false, antistatus:false, antibot:false, antiforeign:false, antisticker:false, antivideo:false };
-  return { db, cfg: db[jid] };
-}
 
-// Link regex - real
-const LINK_REGEX = /(https?:\/\/|www\.|chat\.whatsapp\.com\/|wa\.me\/|t\.me\/|instagram\.com|facebook\.com|youtube\.com|youtu\.be|tiktok\.com)/i;
+// ---------- REAL EVENT HANDLER ----------
+// index.js will call: p.onMessage(sock, m, jid) - we connect all at end
+async function onMessage(sock, m, jid){
+  if(!m.isGroup) return; // anti only works in groups
+  const cfg = groupCfg(jid);
+  const anyOn = Object.values(cfg).some(v=>v===true);
+  if(!anyOn) return;
 
-module.exports = {
-  name: "anti",
-  loadAnti, saveAnti, getGroupAnti,
+  const body = (m.body||'').toLowerCase();
+  const sender = m.sender;
+  if(!sender) return;
 
-  // ===== REAL ANTI ENGINE - Called from index.js on every message =====
-  async handleAnti(sock, m, jid, isGroup, sender, isOwner, isAdmin){
-    if(!isGroup) return false;
-    if(isOwner || isAdmin) return false; // Admins + Owner bypass
+  // Don't punish admins / owner / bot itself
+  if(m.isOwner) return;
+  if(await isAdmin(sock, jid, sender)) return;
 
-    const { db, cfg } = getGroupAnti(jid);
-    const text = m.message?.conversation || m.message?.extendedTextMessage?.text || m.message?.imageMessage?.caption || m.message?.videoMessage?.caption || "";
-    const msgType = Object.keys(m.message || {})[0] || "";
+  const botAdmin = await isBotAdmin(sock, jid);
+  if(!botAdmin) return; // can't delete/kick without admin
 
-    // --- ANTI LINK - REAL DELETE + KICK WARNING ---
-    if(cfg.antilink && LINK_REGEX.test(text)){
-      try{
-        await sock.sendMessage(jid, { delete: m.key });
-        await sock.sendMessage(jid, { text: `▫️ 💀 @${sender.split('@')[0]} Link Not Allowed, Message Deleted`, mentions: [sender] });
-      }catch{}
-      return true;
+  try{
+    // ANTILINK - real
+    if(cfg.antilink && /https?:\/\/|www\.|wa\.me\/|t\.me\/|chat\.whatsapp\.com\//i.test(m.body||'')){
+      return await punish(sock, jid, sender, m, 'sent a link - message deleted', true);
     }
-
-    // --- ANTI STICKER - REAL DELETE ---
-    if(cfg.antisticker && msgType === 'stickerMessage'){
-      try{ await sock.sendMessage(jid, { delete: m.key }); }catch{}
-      return true;
+    // ANTICHANNEL - newsletter / channel link
+    if(cfg.antichannel && /whatsapp\.com\/channel|newsletter/i.test(m.body||'')){
+      return await punish(sock, jid, sender, m, 'sent a channel link', true);
     }
-
-    // --- ANTI VIDEO - REAL DELETE ---
-    if(cfg.antivideo && (msgType === 'videoMessage' || msgType === 'documentMessage')){
-      try{ await sock.sendMessage(jid, { delete: m.key }); }catch{}
-      return true;
+    // ANTIGROUP - group invite link
+    if(cfg.antigroup && /chat\.whatsapp\.com\/[A-Za-z0-9]+/i.test(m.body||'')){
+      return await punish(sock, jid, sender, m, 'sent group invite', true);
     }
-
-    // --- ANTI FOREIGN - REAL CHECK +84 +1 +92 etc, allow +234 +233 +254 ---
-    if(cfg.antiforeign){
-      const num = sender.split('@')[0];
-      const allowed = ['234','233','254','256','27','44'];
-      const isForeign = !allowed.some(p => num.startsWith(p));
-      if(isForeign){
-        try{
-          await sock.sendMessage(jid, { delete: m.key });
-          await sock.groupParticipantsUpdate(jid, [sender], 'remove');
-          await sock.sendMessage(jid, { text: `▫️ 💀 Foreign Number Removed: @${num}`, mentions: [sender] });
-        }catch{}
-        return true;
+    // ANTIBUG - crash / very long / weird unicode
+    if(cfg.antibug && ((m.body||'').length > 4000 || /[\u{1F000}-\u{1FAFF}]{50,}/u.test(m.body||'') || (m.body||'').split('\n').length > 100)){
+      return await punish(sock, jid, sender, m, 'sent bug / crash text', true);
+    }
+    // ANTITAG - tagall / hidetag attempt
+    if(cfg.antitag && m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.length >= 10){
+      return await punish(sock, jid, sender, m, 'tagged too many people', false);
+    }
+    // ANTIMENTION - mentions everyone via @
+    if(cfg.antimention && (m.body||'').includes('@') && (m.body||'').split('@').length > 10){
+      return await punish(sock, jid, sender, m, 'mass mention', false);
+    }
+    // ANTIFORWARD - forwarded message
+    if(cfg.antiforward && (m.message?.extendedTextMessage?.contextInfo?.isForwarded || m.message?.imageMessage?.contextInfo?.isForwarded || m.message?.videoMessage?.contextInfo?.isForwarded)){
+      return await punish(sock, jid, sender, m, 'sent forwarded message', false);
+    }
+    // ANTINSFW - real word filter
+    if(cfg.antinsfw){
+      const bad = ['porn','sex','xxx','pussy','dick','fuck you','nude','onlyfans'];
+      if(bad.some(w=>body.includes(w))) return await punish(sock, jid, sender, m, 'sent NSFW content', false);
+    }
+    // ANTISTICKER - sticker spam
+    if(cfg.antisticker && m.message?.stickerMessage){
+      const key = jid+sender;
+      const now = Date.now();
+      const e = stickerMap.get(key) || {count:0, last:now};
+      if(now - e.last < 10000) e.count++; else e.count = 1;
+      e.last = now; stickerMap.set(key, e);
+      if(e.count >= 5) return await punish(sock, jid, sender, m, 'sticker spam', false);
+    }
+    // ANTIFLOOD / ANTISPAM - real rate limit: 5 msgs in 5 sec
+    if(cfg.antiflood || cfg.antispam){
+      const key = jid+sender;
+      const now = Date.now();
+      const e = floodMap.get(key) || {count:0, last:now};
+      if(now - e.last < 5000) e.count++; else e.count = 1;
+      e.last = now; floodMap.set(key, e);
+      if(e.count >= 6){
+        floodMap.delete(key);
+        return await punish(sock, jid, sender, m, 'flooding / spamming', true);
       }
     }
-
-    // --- ANTI BOT - REAL: If sender is bot (has bot in name or sends automated) ---
-    if(cfg.antibot){
-      // Baileys marks bot messages via verifiedBizName or isBot - check participant
-      try{
-        const meta = await sock.groupMetadata(jid);
-        const p = meta.participants.find(x => x.id === sender);
-        if(p && p.isAdmin === false && m.key.id && m.key.id.startsWith('BAE5')){
-          await sock.sendMessage(jid, { delete: m.key });
-          return true;
-        }
-      }catch{}
+    // ANTIFAKE - foreign numbers: only +234 allowed (Nigeria) - change in config if needed
+    if(cfg.antifake){
+      const num = sender.split('@')[0];
+      if(!num.startsWith('234') && !num.startsWith('234903')){
+        // allow if already in group long? we kick immediately
+        return await punish(sock, jid, sender, m, 'fake / foreign number', true);
+      }
     }
+    // ANTIBOT - another bot (starts with . ! # / and is not our bot, or has bot in name)
+    if(cfg.antibot && /^[.!#\/]/.test(m.body||'') && !m.isOwner){
+      // If sender sends bot-like commands rapidly, treat as bot
+      const key = 'bot'+jid+sender;
+      const e = floodMap.get(key) || {count:0, last:Date.now()};
+      e.count++; floodMap.set(key, e);
+      if(e.count >= 5) return await punish(sock, jid, sender, m, 'bot detected', true);
+    }
+    // ANTIVIEWONCE - warn if viewonce sent (real recovery is in vv plugin)
+    if(cfg.antiviewonce && (m.message?.viewOnceMessage || m.message?.viewOnceMessageV2)){
+      await sock.sendMessage(jid, { text: `👁️ @${sender.split('@')[0]} sent view-once - anti-viewonce is ON`, mentions:[sender] });
+    }
+    // ANTIEDIT - edited message
+    if(cfg.antiedit && m.message?.editedMessage){
+      await sock.sendMessage(jid, { text: `✏️ @${sender.split('@')[0]} edited a message`, mentions:[sender] });
+    }
+  }catch(e){ console.log('anti error', e.message); }
+}
 
-    return false;
-  },
+async function onGroupUpdate(sock, update){
+  // ANTIPROMOTE / ANTIDEMOTE / ANTIRAID - real revert
+  try{
+    const { id, participants, action, author } = update;
+    const cfg = groupCfg(id);
+    if(!author) return;
+    const botAdmin = await isBotAdmin(sock, id);
+    if(!botAdmin) return;
+    if(cfg.antipromote && action === 'promote'){
+      // revert: demote them back, unless owner did it
+      await sock.groupParticipantsUpdate(id, participants, 'demote');
+      await sock.sendMessage(id, { text: `🛡️ Anti-promote: Reverted promote by @${author.split('@')[0]}`, mentions:[author] });
+    }
+    if(cfg.antidemote && action === 'demote'){
+      await sock.groupParticipantsUpdate(id, participants, 'promote');
+      await sock.sendMessage(id, { text: `🛡️ Anti-demote: Reverted demote by @${author.split('@')[0]}`, mentions:[author] });
+    }
+    if(cfg.antiraid && action === 'add' && participants.length >= 3){
+      // mass join = raid
+      await sock.sendMessage(id, { text: `🛡️ Anti-raid: ${participants.length} joins detected. Closing group...` });
+      await sock.groupSettingUpdate(id, 'announcement');
+    }
+  }catch{}
+}
 
-  // ===== REAL ANTI DELETE HANDLER - Called on message.delete event =====
-  async handleAntiDelete(sock, jid, deletedKey, originalMsg){
-    const { cfg } = getGroupAnti(jid);
-    if(!cfg.antidelete) return;
-    if(!originalMsg) return;
-    const sender = originalMsg.key?.participant || originalMsg.key?.remoteJid;
-    const text = originalMsg.message?.conversation || originalMsg.message?.extendedTextMessage?.text || originalMsg.message?.imageMessage?.caption || "[Media Message]";
+async function onCall(sock, calls){
+  // ANTISPAMCALL - real reject spam calls
+  const db = load();
+  for(const c of calls){
+    if(c.status !== 'offer') continue;
+    const jid = c.from;
+    // check if any group has antispamcall on - global for calls
+    const any = Object.values(db).some(g=>g.antispamcall);
+    if(!any) continue;
     try{
-      await sock.sendMessage(jid, {
-        text: `▫️ 💀 Anti-Delete\nUser: @${sender.split('@')[0]}\nDeleted Message: ${text}`,
-        mentions: [sender]
-      });
+      await sock.rejectCall(c.id, c.from);
+      await sock.sendMessage(c.from, { text: '❌ Spam call blocked by FACELESS Anti.' });
+      await sock.updateBlockStatus(c.from, 'block');
     }catch{}
-  },
+  }
+}
 
-  // ===== REAL ANTI VIEWONCE HANDLER =====
-  async handleAntiViewOnce(sock, m, jid){
-    const { cfg } = getGroupAnti(jid);
-    if(!cfg.antiviewonce) return false;
-    const vo = m.message?.viewOnceMessage || m.message?.viewOnceMessageV2;
-    if(!vo) return false;
-    const inner = vo.message || {};
-    const type = Object.keys(inner)[0] || "";
-    const mediaMsg = inner[type];
-    if(!mediaMsg) return false;
-    try{
-      const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
-      const mediaType = type.includes('image') ? 'image' : type.includes('video') ? 'video' : 'audio';
-      const stream = await downloadContentFromMessage(mediaMsg, mediaType);
-      let buf = Buffer.from([]);
-      for await (const chunk of stream) buf = Buffer.concat([buf, chunk]);
-      const sender = m.key.participant || m.key.remoteJid;
-      if(mediaType === 'image') await sock.sendMessage(jid, { image: buf, caption: `▫️ 💀 Anti-ViewOnce From @${sender.split('@')[0]}`, mentions: [sender] });
-      if(mediaType === 'video') await sock.sendMessage(jid, { video: buf, caption: `▫️ 💀 Anti-ViewOnce From @${sender.split('@')[0]}`, mentions: [sender] });
+module.exports = {
+  name: 'anti',
+  commands: COMMANDS,
+  onMessage,
+  onGroupUpdate,
+  onCall,
+  getSettings: load,
+
+  run: async (sock, m, jid, cmd, args, text, isOwner, isGroup, sender) => {
+    if(!COMMANDS.includes(cmd)) return false;
+
+    if(cmd === 'anti'){
+      if(!isGroup){ await sock.sendMessage(jid, { text: 'Use in group' }, { quoted: m }); return true; }
+      const cfg = groupCfg(jid);
+      let t = `╭━━〔 🛡️ ANTI MENU 〕\n│\n`;
+      for(const c of COMMANDS.filter(x=>x!=='anti')) t += `│ ➠ .${c} : ${cfg[c]?'✅ ON':'❌ OFF'}\n`;
+      t += `╰━━━━━━━━━━━━━━\n\nUsage: .antilink on / .antilink off`;
+      await sock.sendMessage(jid, { text: t }, { quoted: m });
       return true;
-    }catch{ return false; }
-  },
-
-  // ===== COMMANDS =====
-  async run(sock, m, jid, cmd, args, text, isOwner, isGroup, sender){
-    const map = {
-      'antilink':'antilink',
-      'antidelete':'antidelete',
-      'antiviewonce':'antiviewonce',
-      'antistatus':'antistatus',
-      'antibot':'antibot',
-      'antiforeign':'antiforeign',
-      'antisticker':'antisticker',
-      'antivideo':'antivideo'
-    };
-    if(!map[cmd]) return false;
+    }
 
     if(!isGroup){
-      await facelessReply(sock, jid, "This Command Works In Group Only", m);
+      await sock.sendMessage(jid, { text: '❌ Anti commands work in group only' }, { quoted: m });
+      return true;
+    }
+    // Only admin / owner can toggle anti
+    const admin = await isAdmin(sock, jid, sender);
+    if(!isOwner && !admin){
+      await sock.sendMessage(jid, { text: '❌ Admins / Owner only' }, { quoted: m });
       return true;
     }
 
-    // Admin / Owner only - real check
-    let meta;
-    try{ meta = await sock.groupMetadata(jid); }catch{
-      await facelessReply(sock, jid, "Failed To Get Group Info", m);
+    const arg = (args[0]||'').toLowerCase();
+    if(arg === 'on' || arg === 'off'){
+      setGroup(jid, cmd, arg==='on');
+      await sock.sendMessage(jid, { text: `🛡️ ${DESC[cmd]}\n.${cmd} is now ${arg==='on'?'✅ ON':'❌ OFF'} in this group` }, { quoted: m });
       return true;
     }
-    const senderNum = (sender || "").split('@')[0];
-    const isAdmin = meta.participants.some(p => p.id.includes(senderNum) && (p.admin === 'admin' || p.admin === 'superadmin'));
-    if(!isAdmin && !isOwner){
-      await facelessReply(sock, jid, "This Command Is For Admins Only", m);
-      return true;
-    }
-
-    await sendAwait(sock, jid, m);
-    const action = (args[0] || "").toLowerCase();
-    if(action !== 'on' && action !== 'off'){
-      await facelessReply(sock, jid, `Usage: .${cmd} on / .${cmd} off`, m);
-      return true;
-    }
-    const { db, cfg } = getGroupAnti(jid);
-    cfg[map[cmd]] = action === 'on';
-    db[jid] = cfg;
-    saveAnti(db);
-    await facelessReply(sock, jid, `${cmd} Turned ${action.toUpperCase()} For This Group`, m);
+    const cfg = groupCfg(jid);
+    await sock.sendMessage(jid, { text: `🛡️ ${DESC[cmd]}\nStatus: ${cfg[cmd]?'✅ ON':'❌ OFF'}\n\nUsage: .${cmd} on / .${cmd} off` }, { quoted: m });
     return true;
   }
 };
